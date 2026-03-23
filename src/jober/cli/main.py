@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
+import sys
 from pathlib import Path
+
+# Fix Windows console encoding for emoji/unicode support
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 import typer
 from rich.console import Console
@@ -30,10 +42,10 @@ from jober.utils.tracking import add_record, get_stats
 
 app = typer.Typer(
     name="jober",
-    help="🚀 Jober CLI — Multiagente LangGraph para postulaciones laborales.",
+    help="Jober CLI - Multiagente LangGraph para postulaciones laborales.",
     no_args_is_help=True,
 )
-console = Console()
+console = Console(force_terminal=True)
 
 
 # ── jober init ──────────────────────────────────────────────────────────────
