@@ -52,25 +52,51 @@ class Educacion(BaseModel):
 
 class PreferenciasLaborales(BaseModel):
     """Preferencias del usuario para búsqueda autónoma de trabajo."""
-    
-    # Qué tipo de trabajo busca
-    roles_deseados: list[str] = Field(default_factory=list)  # ej: ["Data Scientist", "ML Engineer"]
-    industrias_preferidas: list[str] = Field(default_factory=list)  # ej: ["FinTech", "HealthTech"]
-    modalidad: list[str] = Field(default_factory=lambda: ["remoto", "hibrido"])  # remoto, hibrido, presencial
-    ubicaciones: list[str] = Field(default_factory=list)  # ej: ["Santiago", "Remote"]
-    
-    # Tolerancia a match incompleto
-    min_match_score: float = 0.6  # Aplica si match >= 60%
-    aplicar_sin_100_requisitos: bool = True  # Acepta que no cumple todos los requisitos
-    
-    # Habilidades críticas vs nice-to-have
-    habilidades_must_have: list[str] = Field(default_factory=list)  # Debe tener al menos una
+
+    # ── Identidad profesional ──────────────────────────────────────────────
+    roles_deseados: list[str] = Field(default_factory=list)
+    nivel_experiencia: str = ""  # junior, mid, senior, lead, etc.
+    anos_experiencia: int = 0
+    resumen_candidato: str = ""  # Frase corta que resume quién es profesionalmente
+
+    # ── Habilidades ────────────────────────────────────────────────────────
+    habilidades_dominadas: list[str] = Field(default_factory=list)  # Las que domina bien
+    habilidades_en_aprendizaje: list[str] = Field(default_factory=list)  # Aprendiendo / básicas
+    habilidades_must_have: list[str] = Field(default_factory=list)  # Críticas para él
     habilidades_nice_to_have: list[str] = Field(default_factory=list)
-    
-    # Plataformas activas
+    herramientas_y_tecnologias: list[str] = Field(default_factory=list)  # Stack concreto
+
+    # ── Preferencias de búsqueda ────────────────────────────────────────────
+    industrias_preferidas: list[str] = Field(default_factory=list)
+    tipo_empresa: list[str] = Field(default_factory=list)  # startup, corporativo, pyme, etc.
+    modalidad: list[str] = Field(default_factory=lambda: ["remoto", "hibrido"])
+    ubicaciones: list[str] = Field(default_factory=list)
+    disponibilidad: str = "inmediata"  # inmediata, 2 semanas, 1 mes, etc.
+    jornada: str = "full-time"  # full-time, part-time, freelance, contrato
+
+    # ── Expectativas salariales ────────────────────────────────────────────
+    salario_minimo: str = ""  # ej: "$800.000 CLP", "$2000 USD"
+    salario_ideal: str = ""
+    moneda_preferida: str = ""
+    acepta_negociar_salario: bool = True
+
+    # ── Tolerancia y estrategia ────────────────────────────────────────────
+    min_match_score: float = 0.55  # Aplica si match >= 55%
+    aplicar_sin_100_requisitos: bool = True
+    max_anos_experiencia_extra: int = 2  # Aplica a puestos que pidan hasta 2 años más
+    abierto_a_roles_similares: bool = True  # Si busca "Data Scientist" también aplica a "ML Engineer"
+
+    # ── Deal breakers ──────────────────────────────────────────────────────
+    deal_breakers: list[str] = Field(default_factory=list)  # ej: ["presencial obligatorio", "viajes frecuentes"]
+    idiomas_requeridos: list[str] = Field(default_factory=list)  # Idiomas que domina para el trabajo
+
+    # ── Motivación y contexto ───────────────────────────────────────────────
+    motivacion: str = ""  # Por qué busca trabajo (crecer, cambiar rubro, primer empleo, etc.)
+    fortalezas_clave: list[str] = Field(default_factory=list)  # Lo que el usuario cree que lo diferencia
+    areas_mejora: list[str] = Field(default_factory=list)  # Lo que reconoce que le falta
+
+    # ── Plataformas y ritmo ────────────────────────────────────────────────
     plataformas_activas: list[str] = Field(default_factory=lambda: ["getonbrd", "linkedin", "meetfrank"])
-    
-    # Control de ritmo
     max_aplicaciones_por_dia: int = 10
     delay_entre_aplicaciones_segundos: int = 60
 
