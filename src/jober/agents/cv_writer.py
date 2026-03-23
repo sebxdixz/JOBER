@@ -16,14 +16,45 @@ Recibirás:
 1. El perfil maestro del candidato (JSON)
 2. La oferta de trabajo con sus requisitos
 
-Tu tarea es generar un CV en formato Markdown que:
-- Resalte las experiencias y habilidades MÁS relevantes para esta oferta específica
-- Reorganice las secciones para que lo más relevante aparezca primero
-- Use keywords de la oferta de forma natural
-- Sea conciso (máximo 2 páginas si se imprimiera)
-- Tenga un resumen profesional adaptado a la oferta
+Genera un CV en Markdown con esta estructura EXACTA:
 
-Responde SOLO con el CV en Markdown limpio, listo para exportar."""
+# [Nombre Completo]
+**[Título Profesional adaptado al cargo]**
+
+[Email] | [Teléfono] | [LinkedIn] | [GitHub]
+
+---
+
+## Resumen Profesional
+[3-4 líneas adaptadas a la oferta, usando keywords del puesto]
+
+## Experiencia Profesional
+
+### [Cargo] | [Empresa]
+*[Fecha inicio] - [Fecha fin]*
+- [Logro cuantificable relevante para la oferta]
+- [Logro cuantificable relevante]
+- [Responsabilidad clave]
+
+## Habilidades Técnicas
+**[Categoría]:** skill1, skill2, skill3
+
+## Educación
+### [Título] | [Institución]
+*[Años]*
+
+## Idiomas
+- [Idioma]: [Nivel]
+
+Reglas:
+- Resalta experiencias y habilidades MÁS relevantes para ESTA oferta
+- Reorganiza secciones para que lo más relevante aparezca primero
+- Usa keywords de la oferta de forma natural
+- Máximo 2 páginas
+- NO inventes información que no esté en el perfil
+- Si el candidato tiene habilidades parciales, resalta lo que SÍ tiene
+
+Responde SOLO con el CV en Markdown limpio."""
 
 
 COVER_LETTER_PROMPT = """Eres un experto en redacción de cartas de presentación.
@@ -31,12 +62,34 @@ Recibirás:
 1. El perfil maestro del candidato (JSON)
 2. La oferta de trabajo
 
-Genera una carta de presentación en Markdown que:
-- Sea personalizada para la empresa y el cargo
-- Conecte experiencias concretas del candidato con los requisitos
-- Sea profesional pero con personalidad
-- Tenga máximo 3-4 párrafos
-- NO sea genérica
+Genera una carta de presentación en Markdown con esta estructura:
+
+# Carta de Presentación
+
+**[Nombre del candidato]**
+[Fecha]
+
+---
+
+Estimado equipo de [Empresa],
+
+[Párrafo 1: Gancho - Por qué te interesa este puesto específico y qué aportas]
+
+[Párrafo 2: Conexión directa entre TUS experiencias concretas y los requisitos del puesto. Menciona proyectos, tecnologías y logros específicos.]
+
+[Párrafo 3: Valor diferencial - Qué te hace único para este rol. Habilidades blandas + técnicas complementarias.]
+
+[Párrafo 4: Cierre - Disponibilidad, entusiasmo, llamada a la acción]
+
+Atentamente,
+**[Nombre]**
+
+Reglas:
+- Personalizada para la empresa Y el cargo (no genérica)
+- Conecta experiencias concretas del perfil con requisitos de la oferta
+- Profesional pero con personalidad
+- NO inventes experiencias o habilidades que no estén en el perfil
+- Si no cumple 100% de requisitos, enfatiza lo que SÍ cumple y la capacidad de aprender
 
 Responde SOLO con la carta en Markdown."""
 
@@ -86,19 +139,28 @@ async def cv_writer_node(state: JoberState) -> dict:
 
 
 async def _generate_all(llm: ChatOpenAI, context: str) -> tuple[str, str, str]:
-    """Genera CV, cover letter y match analysis en paralelo."""
+    """Genera CV, cover letter y match analysis secuencialmente (evita rate limits)."""
     import asyncio
 
-    async def _call(system: str) -> str:
-        resp = await llm.ainvoke([
-            SystemMessage(content=system),
-            HumanMessage(content=context),
-        ])
-        return resp.content
+    async def _call_with_retry(system: str, max_retries: int = 3) -> str:
+        for attempt in range(max_retries):
+            try:
+                resp = await llm.ainvoke([
+                    SystemMessage(content=system),
+                    HumanMessage(content=context),
+                ])
+                return resp.content
+            except Exception as e:
+                if "429" in str(e) or "rate" in str(e).lower():
+                    wait = 5 * (attempt + 1)
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+        raise RuntimeError("Max retries exceeded for LLM call")
 
-    cv_task = _call(CV_SYSTEM_PROMPT)
-    cl_task = _call(COVER_LETTER_PROMPT)
-    match_task = _call(MATCH_ANALYSIS_PROMPT)
+    # Sequential to avoid rate limits
+    cv_resp = await _call_with_retry(CV_SYSTEM_PROMPT)
+    cl_resp = await _call_with_retry(COVER_LETTER_PROMPT)
+    match_resp = await _call_with_retry(MATCH_ANALYSIS_PROMPT)
 
-    results = await asyncio.gather(cv_task, cl_task, match_task)
-    return results[0], results[1], results[2]
+    return cv_resp, cl_resp, match_resp

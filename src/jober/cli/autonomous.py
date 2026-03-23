@@ -17,7 +17,7 @@ from jober.agents.cv_writer import cv_writer_node
 from jober.core.config import POSTULACIONES_DIR
 from jober.core.models import RegistroPostulacion, EstadoPostulacion
 from jober.core.state import JoberState
-from jober.utils.file_io import load_perfil_maestro, save_application_output
+from jober.utils.file_io import load_perfil_maestro, save_application_output_async
 from jober.utils.tracking import add_record, read_all_records
 
 
@@ -130,8 +130,8 @@ async def autonomous_run_loop(max_iterations: int | None = None):
                         urls_procesadas.add(url)
                         continue
                     
-                    # Guardar aplicación
-                    output_dir = save_application_output(oferta, docs)
+                    # Guardar aplicación (Markdown + PDF)
+                    output_dir = await save_application_output_async(oferta, docs)
                     
                     record = RegistroPostulacion(
                         empresa=oferta.empresa,

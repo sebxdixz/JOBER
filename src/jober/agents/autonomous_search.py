@@ -44,17 +44,104 @@ async def search_getonbrd(keywords: list[str], max_results: int = 20) -> list[st
 
 
 async def search_linkedin(keywords: list[str], max_results: int = 20) -> list[str]:
-    """Busca ofertas en LinkedIn y devuelve lista de URLs."""
-    # LinkedIn requiere login para búsqueda avanzada
-    # Por ahora, devolvemos lista vacía (implementar con cookies/session)
-    return []
+    """Busca ofertas en LinkedIn Jobs (guest view, sin login) y devuelve lista de URLs."""
+    urls: list[str] = []
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        )
+        page = await context.new_page()
+        
+        try:
+            search_query = " ".join(keywords[:3])
+            # LinkedIn guest job search (no login required)
+            url = (
+                f"https://www.linkedin.com/jobs/search/"
+                f"?keywords={search_query.replace(' ', '%20')}"
+                f"&location=&f_TPR=r604800"  # Last week
+            )
+            
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            
+            # Scroll to load more results
+            for _ in range(3):
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1500)
+            
+            # Extract job listing links
+            links = await page.query_selector_all(
+                "a.base-card__full-link, "
+                "a[href*='/jobs/view/'], "
+                "a.base-search-card__full-link"
+            )
+            for link in links[:max_results]:
+                href = await link.get_attribute("href")
+                if href and "/jobs/view/" in href:
+                    # Clean URL (remove tracking params)
+                    clean_url = href.split("?")[0]
+                    if clean_url not in urls:
+                        urls.append(clean_url)
+        
+        except Exception:
+            pass  # LinkedIn may block; fail silently
+        finally:
+            await browser.close()
+    
+    return urls
 
 
 async def search_meetfrank(keywords: list[str], max_results: int = 20) -> list[str]:
     """Busca ofertas en MeetFrank y devuelve lista de URLs."""
-    # MeetFrank tiene API/scraping similar a GetOnBrd
-    # Implementación pendiente
-    return []
+    urls: list[str] = []
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        )
+        page = await context.new_page()
+        
+        try:
+            search_query = " ".join(keywords[:3])
+            url = f"https://meetfrank.com/jobs?search={search_query.replace(' ', '%20')}"
+            
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            
+            # Scroll to load more
+            for _ in range(2):
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1500)
+            
+            # Extract job links
+            links = await page.query_selector_all(
+                "a[href*='/jobs/'], "
+                "a[href*='/offer/']"
+            )
+            for link in links[:max_results]:
+                href = await link.get_attribute("href")
+                if href:
+                    full_url = f"https://meetfrank.com{href}" if href.startswith("/") else href
+                    if full_url not in urls and ("/jobs/" in full_url or "/offer/" in full_url):
+                        urls.append(full_url)
+        
+        except Exception:
+            pass  # MeetFrank may change structure; fail silently
+        finally:
+            await browser.close()
+    
+    return urls
 
 
 # ── Filtrado inteligente ───────────────────────────────────────────────────
