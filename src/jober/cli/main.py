@@ -63,18 +63,26 @@ def init():
 
     # 1. API Key
     settings = load_settings()
-    if not settings.openai_api_key:
+    if not settings.llm_api_key:
         api_key = Prompt.ask(
-            "[yellow]🔑 Ingresa tu OpenAI API Key[/yellow]",
+            "[yellow]\U0001f511 Ingresa tu API Key (Z.AI)[/yellow]",
             password=True,
         )
+        base_url = Prompt.ask(
+            "[yellow]\U0001f310 Base URL del LLM[/yellow]",
+            default="https://api.z.ai/api/coding/paas/v4",
+        )
+        model = Prompt.ask(
+            "[yellow]\U0001f916 Modelo LLM[/yellow]",
+            default="GLM-4.7-flash",
+        )
         JOBER_ENV_FILE.write_text(
-            f'OPENAI_API_KEY="{api_key}"\nLLM_MODEL="gpt-4o"\nLLM_TEMPERATURE=0.2\n',
+            f'LLM_API_KEY="{api_key}"\nLLM_BASE_URL="{base_url}"\nLLM_MODEL="{model}"\nLLM_TEMPERATURE=0.2\n',
             encoding="utf-8",
         )
-        console.print("[green]✅ API Key guardada en ~/.jober/.env[/green]")
+        console.print("[green]\u2705 API Key guardada en ~/.jober/.env[/green]")
     else:
-        console.print("[green]✅ API Key ya configurada.[/green]")
+        console.print("[green]\u2705 API Key ya configurada.[/green]")
 
     # 2. CVs
     cv_path_str = Prompt.ask(
@@ -256,7 +264,7 @@ def status():
 
     checks = {
         "📁 Carpeta ~/.jober/": JOBER_HOME.exists(),
-        "🔑 API Key configurada": JOBER_ENV_FILE.exists() and load_settings().openai_api_key != "",
+        "🔑 API Key configurada": JOBER_ENV_FILE.exists() and load_settings().llm_api_key != "",
         "📄 CVs cargados": any(CV_BASE_DIR.glob("*.pdf")) if CV_BASE_DIR.exists() else False,
         "🧠 Perfil maestro": PERFIL_MAESTRO_PATH.exists(),
     }

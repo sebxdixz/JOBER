@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from langchain_openai import ChatOpenAI
 from pydantic_settings import BaseSettings
 
 
@@ -25,8 +26,9 @@ def ensure_jober_dirs() -> None:
 class Settings(BaseSettings):
     """Settings cargadas desde ~/.jober/.env"""
 
-    openai_api_key: str = ""
-    llm_model: str = "gpt-4o"
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.z.ai/api/coding/paas/v4"
+    llm_model: str = "GLM-4.7-flash"
     llm_temperature: float = 0.2
 
     class Config:
@@ -40,3 +42,14 @@ def load_settings() -> Settings:
     if JOBER_ENV_FILE.exists():
         return Settings()
     return Settings()
+
+
+def get_llm(temperature: float | None = None) -> ChatOpenAI:
+    """Crea una instancia de ChatOpenAI apuntando al provider configurado (Z.AI por defecto)."""
+    settings = load_settings()
+    return ChatOpenAI(
+        model=settings.llm_model,
+        temperature=temperature if temperature is not None else settings.llm_temperature,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+    )

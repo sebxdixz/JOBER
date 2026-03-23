@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_openai import ChatOpenAI
 
-from jober.core.config import load_settings
+from jober.core.config import get_llm
 from jober.core.models import PerfilMaestro
 from jober.core.state import JoberState
+from jober.utils.llm_helpers import strip_markdown_fences
 
 
 ONBOARDING_PROMPT = """Eres un entrevistador profesional de recursos humanos.
@@ -35,12 +35,7 @@ Responde SOLO con el JSON actualizado del PerfilMaestro."""
 
 async def onboarding_interview_node(state: JoberState) -> dict:
     """Nodo LangGraph: genera la siguiente pregunta de onboarding."""
-    settings = load_settings()
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        temperature=0.5,
-        api_key=settings.openai_api_key,
-    )
+    llm = get_llm(temperature=0.5)
 
     system = SystemMessage(content=ONBOARDING_PROMPT)
     perfil_context = HumanMessage(
@@ -66,12 +61,7 @@ async def onboarding_interview_node(state: JoberState) -> dict:
 
 async def merge_profile_node(state: JoberState) -> dict:
     """Nodo LangGraph: fusiona respuestas del onboarding con el perfil extraído."""
-    settings = load_settings()
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        temperature=0.1,
-        api_key=settings.openai_api_key,
-    )
+    llm = get_llm(temperature=0.1)
 
     conversation = "\n".join(
         f"{'AI' if isinstance(m, AIMessage) else 'User'}: {m.content}"
@@ -89,7 +79,8 @@ async def merge_profile_node(state: JoberState) -> dict:
     ])
 
     try:
-        perfil = PerfilMaestro.model_validate_json(response.content)
+        clean_json = strip_markdown_fences(response.content)
+        perfil = PerfilMaestro.model_validate_json(clean_json)
     except Exception:
         return {"error": "No se pudo parsear el perfil actualizado."}
 

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 
-from jober.core.config import load_settings
+from jober.core.config import get_llm
 from jober.core.models import OfertaTrabajo
 from jober.core.state import JoberState
+from jober.utils.llm_helpers import strip_markdown_fences
 
 
 EXTRACTION_PROMPT = """Eres un experto en extracción de datos de ofertas laborales.
@@ -101,12 +101,7 @@ async def job_scraper_node(state: JoberState) -> dict:
     if len(page_text) > max_chars:
         page_text = page_text[:max_chars] + "\n...[truncado]"
 
-    settings = load_settings()
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        temperature=0.0,
-        api_key=settings.openai_api_key,
-    )
+    llm = get_llm(temperature=0.0)
 
     response = await llm.ainvoke([
         SystemMessage(content=EXTRACTION_PROMPT),
@@ -114,7 +109,8 @@ async def job_scraper_node(state: JoberState) -> dict:
     ])
 
     try:
-        oferta = OfertaTrabajo.model_validate_json(response.content)
+        clean_json = strip_markdown_fences(response.content)
+        oferta = OfertaTrabajo.model_validate_json(clean_json)
         oferta.url = url
         oferta.plataforma = platform
     except Exception:

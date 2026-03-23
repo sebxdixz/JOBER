@@ -5,9 +5,10 @@ from __future__ import annotations
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
-from jober.core.config import load_settings
+from jober.core.config import get_llm
 from jober.core.models import DocumentosGenerados
 from jober.core.state import JoberState
+from jober.utils.llm_helpers import strip_markdown_fences
 
 
 CV_SYSTEM_PROMPT = """Eres un experto en redacción de CVs profesionales.
@@ -55,12 +56,7 @@ Responde en JSON exacto:
 
 async def cv_writer_node(state: JoberState) -> dict:
     """Nodo LangGraph: genera CV adaptado, cover letter y análisis de fit."""
-    settings = load_settings()
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        temperature=settings.llm_temperature,
-        api_key=settings.openai_api_key,
-    )
+    llm = get_llm()
 
     perfil_json = state.perfil.model_dump_json(indent=2)
     oferta_json = state.oferta.model_dump_json(indent=2)
@@ -75,7 +71,8 @@ async def cv_writer_node(state: JoberState) -> dict:
 
     try:
         import json
-        match_data = json.loads(match_resp)
+        clean_match = strip_markdown_fences(match_resp)
+        match_data = json.loads(clean_match)
         docs.match_score = float(match_data.get("match_score", 0))
         docs.analisis_fit = match_data.get("analisis_fit", "")
     except Exception:

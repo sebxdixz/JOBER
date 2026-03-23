@@ -5,12 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 from pypdf import PdfReader
 
-from jober.core.config import load_settings
+from jober.core.config import get_llm
 from jober.core.models import PerfilMaestro
 from jober.core.state import JoberState
+from jober.utils.llm_helpers import strip_markdown_fences
 
 
 SYSTEM_PROMPT = """Eres un experto en recursos humanos y análisis de CVs.
@@ -49,12 +49,7 @@ def extract_text_from_cvs(cv_dir: Path) -> str:
 
 async def cv_reader_node(state: JoberState) -> dict:
     """Nodo LangGraph: lee CVs y extrae perfil estructurado."""
-    settings = load_settings()
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        temperature=settings.llm_temperature,
-        api_key=settings.openai_api_key,
-    )
+    llm = get_llm()
 
     cv_text = state.cv_raw_text
     if not cv_text:
@@ -66,7 +61,8 @@ async def cv_reader_node(state: JoberState) -> dict:
     ])
 
     try:
-        perfil = PerfilMaestro.model_validate_json(response.content)
+        clean_json = strip_markdown_fences(response.content)
+        perfil = PerfilMaestro.model_validate_json(clean_json)
     except Exception:
         return {
             "error": f"No se pudo parsear la respuesta del LLM como PerfilMaestro: {response.content[:200]}",
