@@ -1,4 +1,4 @@
-"""Utilidades de I/O — guardar perfil, documentos generados, etc."""
+"""Utilidades de I/O - guardar perfil, documentos generados, etc."""
 
 from __future__ import annotations
 
@@ -7,11 +7,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from jober.core.config import (
-    PERFIL_MAESTRO_PATH,
-    POSTULACIONES_DIR,
-    ensure_jober_dirs,
-)
+from jober.core.config import ensure_profile_dirs
 from jober.core.models import (
     DocumentosGenerados,
     OfertaTrabajo,
@@ -25,37 +21,57 @@ from jober.utils.pdf_export import (
 )
 
 
-def save_perfil_maestro(perfil: PerfilMaestro) -> Path:
-    """Guarda el perfil maestro como JSON en ~/.jober/perfil_maestro.json"""
-    ensure_jober_dirs()
-    PERFIL_MAESTRO_PATH.write_text(
+def save_perfil_maestro(perfil: PerfilMaestro, profile_id: str | None = None) -> Path:
+    """Guarda el perfil maestro como JSON en ~/.jober/profiles/<id>/perfil_maestro.json"""
+    paths = ensure_profile_dirs(profile_id)
+    paths.perfil_path.write_text(
         perfil.model_dump_json(indent=2), encoding="utf-8"
     )
-    return PERFIL_MAESTRO_PATH
+    return paths.perfil_path
 
 
-def load_perfil_maestro() -> PerfilMaestro | None:
+def load_perfil_maestro(profile_id: str | None = None) -> PerfilMaestro | None:
     """Carga el perfil maestro desde disco. Retorna None si no existe."""
-    if not PERFIL_MAESTRO_PATH.exists():
+    paths = ensure_profile_dirs(profile_id)
+    if not paths.perfil_path.exists():
         return None
-    data = PERFIL_MAESTRO_PATH.read_text(encoding="utf-8")
+    data = paths.perfil_path.read_text(encoding="utf-8")
     return PerfilMaestro.model_validate_json(data)
+
+
+def save_last_scout(payload: dict, profile_id: str | None = None) -> Path:
+    """Guarda el ultimo scouting para reutilizarlo luego."""
+    paths = ensure_profile_dirs(profile_id)
+    paths.last_scout_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return paths.last_scout_path
+
+
+def load_last_scout(profile_id: str | None = None) -> dict | None:
+    """Carga el ultimo scouting si existe."""
+    paths = ensure_profile_dirs(profile_id)
+    if not paths.last_scout_path.exists():
+        return None
+    return json.loads(paths.last_scout_path.read_text(encoding="utf-8"))
 
 
 def save_application_output(
     oferta: OfertaTrabajo,
     documentos: DocumentosGenerados,
     resultado_aplicacion: ResultadoAplicacion | None = None,
+    profile_id: str | None = None,
 ) -> Path:
-    """Guarda los documentos generados (Markdown + PDF) en una carpeta por postulación."""
-    ensure_jober_dirs()
+    """Guarda los documentos generados (Markdown + PDF) en una carpeta por postulacion."""
+    paths = ensure_profile_dirs(profile_id)
 
     timestamp = datetime.now().strftime("%Y%m%d")
     empresa = oferta.empresa.replace(" ", "_")[:30] if oferta.empresa else "unknown"
     cargo = oferta.titulo.replace(" ", "_")[:30] if oferta.titulo else "job"
     folder_name = f"{timestamp}_{oferta.plataforma}_{empresa}_{cargo}"
 
-    output_dir = POSTULACIONES_DIR / folder_name
+    output_dir = paths.postulaciones_dir / folder_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # CV adaptado (Markdown + PDF)
@@ -127,16 +143,17 @@ async def save_application_output_async(
     oferta: OfertaTrabajo,
     documentos: DocumentosGenerados,
     resultado_aplicacion: ResultadoAplicacion | None = None,
+    profile_id: str | None = None,
 ) -> Path:
-    """Versión async de save_application_output (para uso dentro de jober run)."""
-    ensure_jober_dirs()
+    """Version async de save_application_output (para uso dentro de jober run)."""
+    paths = ensure_profile_dirs(profile_id)
 
     timestamp = datetime.now().strftime("%Y%m%d")
     empresa = oferta.empresa.replace(" ", "_")[:30] if oferta.empresa else "unknown"
     cargo = oferta.titulo.replace(" ", "_")[:30] if oferta.titulo else "job"
     folder_name = f"{timestamp}_{oferta.plataforma}_{empresa}_{cargo}"
 
-    output_dir = POSTULACIONES_DIR / folder_name
+    output_dir = paths.postulaciones_dir / folder_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # CV adaptado (Markdown + PDF)

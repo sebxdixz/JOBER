@@ -1,11 +1,10 @@
-"""Utilidades de tracking — lectura/escritura del CSV de postulaciones."""
+"""Utilidades de tracking - lectura/escritura del CSV de postulaciones."""
 
 from __future__ import annotations
 
 import csv
-from pathlib import Path
 
-from jober.core.config import TRACKING_CSV
+from jober.core.config import ensure_profile_dirs
 from jober.core.models import RegistroPostulacion
 
 
@@ -15,19 +14,21 @@ HEADERS = [
 ]
 
 
-def _ensure_csv() -> None:
+def _ensure_csv(profile_id: str | None = None):
     """Crea el CSV con headers si no existe."""
-    if not TRACKING_CSV.exists():
-        TRACKING_CSV.parent.mkdir(parents=True, exist_ok=True)
-        with open(TRACKING_CSV, "w", newline="", encoding="utf-8") as f:
+    paths = ensure_profile_dirs(profile_id)
+    if not paths.tracking_csv.exists():
+        paths.tracking_csv.parent.mkdir(parents=True, exist_ok=True)
+        with open(paths.tracking_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(HEADERS)
+    return paths.tracking_csv
 
 
-def add_record(record: RegistroPostulacion) -> None:
-    """Agrega un registro de postulación al CSV."""
-    _ensure_csv()
-    with open(TRACKING_CSV, "a", newline="", encoding="utf-8") as f:
+def add_record(record: RegistroPostulacion, profile_id: str | None = None) -> None:
+    """Agrega un registro de postulacion al CSV."""
+    tracking_csv = _ensure_csv(profile_id)
+    with open(tracking_csv, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
             record.fecha,
@@ -41,20 +42,20 @@ def add_record(record: RegistroPostulacion) -> None:
         ])
 
 
-def read_all_records() -> list[RegistroPostulacion]:
+def read_all_records(profile_id: str | None = None) -> list[RegistroPostulacion]:
     """Lee todos los registros del CSV."""
-    _ensure_csv()
+    tracking_csv = _ensure_csv(profile_id)
     records: list[RegistroPostulacion] = []
-    with open(TRACKING_CSV, "r", encoding="utf-8") as f:
+    with open(tracking_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             records.append(RegistroPostulacion(**row))
     return records
 
 
-def get_stats() -> dict:
-    """Devuelve estadísticas básicas de las postulaciones."""
-    records = read_all_records()
+def get_stats(profile_id: str | None = None) -> dict:
+    """Devuelve estadisticas basicas de las postulaciones."""
+    records = read_all_records(profile_id)
     total = len(records)
     by_status: dict[str, int] = {}
     by_platform: dict[str, int] = {}

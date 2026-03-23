@@ -25,3 +25,9 @@
 - [ ] Implementar lógica para exportar el CV final de Markdown a PDF automáticamente.
 - [ ] Human-in-the-loop: Pausar el grafo de LangGraph para que el usuario apruebe las respuestas y el CV antes de guardar/enviar.
 - [ ] Script de automatización de clicks (Selenium/Playwright) para *enviar* la postulación automáticamente usando los datos generados.
+
+## Fase 5: Multi Perfil y Estrategias de Búsqueda
+- [ ] Soportar múltiples perfiles profesionales por usuario (ej: AI Engineer, Data Scientist, Data Engineer).
+- [ ] Asociar múltiples CVs base según perfil objetivo.
+- [ ] Permitir seleccionar perfil activo desde CLI.
+- [ ] Permitir scouting y aplicación por perfil sin reescribir el perfil maestro completo.

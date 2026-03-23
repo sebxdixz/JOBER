@@ -1,10 +1,9 @@
-"""Comando jober run — modo autónomo de búsqueda y aplicación continua."""
+"""Comando jober run - modo autonomo de busqueda y aplicacion continua."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 
 from rich.console import Console
 from rich.panel import Panel
@@ -12,6 +11,7 @@ from rich.panel import Panel
 from jober.agents.auto_apply import auto_apply_to_job
 from jober.agents.autonomous_search import find_new_opportunities
 from jober.agents.orchestrator import build_apply_graph
+from jober.core.config import resolve_profile_id
 from jober.core.models import RegistroPostulacion, EstadoPostulacion
 from jober.core.state import JoberState
 from jober.utils.file_io import load_perfil_maestro, save_application_output_async
@@ -36,74 +36,83 @@ def _estado_from_application_result(enviado: bool, mensaje: str) -> EstadoPostul
     return EstadoPostulacion.FALLIDO
 
 
-async def autonomous_run_loop(max_iterations: int | None = None):
-    """Loop principal de búsqueda y aplicación autónoma."""
-    
+async def autonomous_run_loop(
+    max_iterations: int | None = None,
+    per_platform: int = 3,
+    profile_id: str | None = None,
+):
+    """Loop principal de busqueda y aplicacion autonoma."""
+    profile_id = resolve_profile_id(profile_id)
+
     # Cargar perfil
-    perfil = load_perfil_maestro()
+    perfil = load_perfil_maestro(profile_id)
     if perfil is None:
         console.print("[red]⚠️  No hay perfil maestro. Ejecuta 'jober init' primero.[/red]")
         return
-    
+
     prefs = perfil.preferencias
     apply_graph = build_apply_graph()
     console.print(Panel.fit(
-        f"[bold cyan]🤖 Modo Autónomo Activado[/bold cyan]\n\n"
+        f"[bold cyan]🤖 Modo Autonomo Activado[/bold cyan]\n\n"
+        f"Perfil: {profile_id}\n"
         f"Roles: {', '.join(prefs.roles_deseados[:3]) or 'Cualquiera'}\n"
-        f"Match mínimo: {prefs.min_match_score:.0%}\n"
-        f"Max aplicaciones/día: {prefs.max_aplicaciones_por_dia}\n"
+        f"Match minimo: {prefs.min_match_score:.0%}\n"
+        f"Max aplicaciones/dia: {prefs.max_aplicaciones_por_dia}\n"
+        f"Scout por plataforma: {per_platform}\n"
         f"Plataformas: {', '.join(prefs.plataformas_activas)}\n\n"
         f"[yellow]Presiona Ctrl+C para detener[/yellow]",
         border_style="cyan",
     ))
-    
+
     iteration = 0
     aplicaciones_hoy = 0
     ultimo_reset_dia = datetime.now().date()
-    
+
     # Cargar URLs ya procesadas
-    records = read_all_records()
+    records = read_all_records(profile_id)
     urls_procesadas = {r.url for r in records if r.url}
-    
+
     try:
         while True:
             iteration += 1
-            
+
             # Reset contador diario
             hoy = datetime.now().date()
             if hoy != ultimo_reset_dia:
                 aplicaciones_hoy = 0
                 ultimo_reset_dia = hoy
-            
-            # Verificar límite diario
+
+            # Verificar limite diario
             if aplicaciones_hoy >= prefs.max_aplicaciones_por_dia:
-                console.print(f"\n[yellow]⏸️  Límite diario alcanzado ({prefs.max_aplicaciones_por_dia}). Esperando hasta mañana...[/yellow]")
-                await asyncio.sleep(3600)  # Esperar 1 hora y revisar
+                console.print(
+                    f"\n[yellow]⏸️  Limite diario alcanzado ({prefs.max_aplicaciones_por_dia}). Esperando...[/yellow]"
+                )
+                await asyncio.sleep(3600)
                 continue
-            
-            console.print(f"\n[bold cyan]═══ Iteración {iteration} ═══[/bold cyan]")
-            
+
+            console.print(f"\n[bold cyan]═══ Iteracion {iteration} ═══[/bold cyan]")
+
             # 1. Buscar nuevas ofertas
             console.print("[cyan]🔍 Buscando nuevas ofertas...[/cyan]")
-            urls = await find_new_opportunities(perfil, max_per_platform=20)
-            
+            urls = await find_new_opportunities(perfil, max_per_platform=per_platform)
+
             # Filtrar URLs ya procesadas
             urls_nuevas = [url for url in urls if url not in urls_procesadas]
-            
+
             if not urls_nuevas:
                 console.print("[yellow]  No hay ofertas nuevas. Esperando 5 minutos...[/yellow]")
                 await asyncio.sleep(300)
                 continue
-            
+
             console.print(f"[green]  ✓ {len(urls_nuevas)} ofertas nuevas encontradas[/green]")
-            
+
             # 2. Procesar cada oferta
             for idx, url in enumerate(urls_nuevas, 1):
                 if aplicaciones_hoy >= prefs.max_aplicaciones_por_dia:
                     break
-                
+
                 console.print(f"\n[cyan]📄 [{idx}/{len(urls_nuevas)}] Analizando: {url[:80]}...[/cyan]")
-                
+
                 try:
                     state = JoberState(job_url=url, perfil=perfil)
                     result = await apply_graph.ainvoke(state)
@@ -124,15 +133,17 @@ async def autonomous_run_loop(max_iterations: int | None = None):
 
                     oferta = result.oferta
                     docs = result.documentos
-                    
-                    # Verificar match mínimo
+
+                    # Verificar match minimo
                     if docs.match_score < prefs.min_match_score:
-                        console.print(f"[yellow]  ⊘ Match bajo ({docs.match_score:.0%} < {prefs.min_match_score:.0%})[/yellow]")
+                        console.print(
+                            f"[yellow]  ⊘ Match bajo ({docs.match_score:.0%} < {prefs.min_match_score:.0%})[/yellow]"
+                        )
                         urls_procesadas.add(url)
                         continue
-                    
-                    # Guardar aplicación (Markdown + PDF)
-                    output_dir = await save_application_output_async(oferta, docs)
+
+                    # Guardar aplicacion (Markdown + PDF)
+                    output_dir = await save_application_output_async(oferta, docs, profile_id=profile_id)
                     application_result = await auto_apply_to_job(
                         oferta,
                         perfil,
@@ -140,12 +151,12 @@ async def autonomous_run_loop(max_iterations: int | None = None):
                         cover_letter_pdf=output_dir / "cover_letter.pdf",
                         cover_letter_md=docs.cover_letter_md,
                     )
-                    await save_application_output_async(oferta, docs, application_result)
+                    await save_application_output_async(oferta, docs, application_result, profile_id=profile_id)
                     estado = _estado_from_application_result(
                         application_result.enviado,
                         application_result.mensaje,
                     )
-                    
+
                     record = RegistroPostulacion(
                         empresa=oferta.empresa,
                         cargo=oferta.titulo,
@@ -155,43 +166,43 @@ async def autonomous_run_loop(max_iterations: int | None = None):
                         carpeta_output=str(output_dir),
                         notas=f"Match: {docs.match_score:.0%} | {application_result.mensaje}",
                     )
-                    add_record(record)
-                    
+                    add_record(record, profile_id)
+
                     if application_result.enviado:
                         aplicaciones_hoy += 1
                     urls_procesadas.add(url)
-                    
+
                     console.print(
                         f"[bold green]  {'✓ APLICADO' if application_result.enviado else '• PREPARADO'}[/bold green] | "
                         f"{oferta.empresa} - {oferta.titulo} | "
                         f"Match: {docs.match_score:.0%} | "
                         f"{application_result.mensaje}"
                     )
-                    
+
                     # Delay entre aplicaciones
                     if application_result.enviado and aplicaciones_hoy < prefs.max_aplicaciones_por_dia:
                         console.print(f"[dim]  Esperando {prefs.delay_entre_aplicaciones_segundos}s...[/dim]")
                         await asyncio.sleep(prefs.delay_entre_aplicaciones_segundos)
-                
-                except Exception as e:
-                    console.print(f"[red]  ✗ Error inesperado: {e}[/red]")
+
+                except Exception as exc:
+                    console.print(f"[red]  ✗ Error inesperado: {exc}[/red]")
                     urls_procesadas.add(url)
                     continue
-            
-            # Resumen de iteración
+
+            # Resumen de iteracion
             console.print(f"\n[bold]Aplicaciones hoy: {aplicaciones_hoy}/{prefs.max_aplicaciones_por_dia}[/bold]")
-            
+
             # Verificar si alcanzamos max_iterations
             if max_iterations and iteration >= max_iterations:
                 console.print(f"\n[green]✓ Completadas {max_iterations} iteraciones.[/green]")
                 break
-            
-            # Esperar antes de la siguiente búsqueda (5 minutos)
-            console.print("[dim]Esperando 5 minutos antes de la siguiente búsqueda...[/dim]")
+
+            # Esperar antes de la siguiente busqueda (5 minutos)
+            console.print("[dim]Esperando 5 minutos antes de la siguiente busqueda...[/dim]")
             await asyncio.sleep(300)
-    
+
     except KeyboardInterrupt:
         console.print("\n\n[yellow]⏸️  Detenido por el usuario.[/yellow]")
-    
-    console.print(f"\n[bold green]═══ Sesión Finalizada ═══[/bold green]")
+
+    console.print(f"\n[bold green]═══ Sesion Finalizada ═══[/bold green]")
     console.print(f"Total aplicaciones realizadas hoy: {aplicaciones_hoy}")
