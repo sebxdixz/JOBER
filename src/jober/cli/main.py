@@ -35,10 +35,12 @@ from jober.core.config import (
 )
 from jober.core.models import RegistroPostulacion, EstadoPostulacion
 from jober.core.state import JoberState
-from jober.agents.cv_reader import extract_text_from_cvs
+from jober.agents.cv_reader import extract_text_from_cvs, cv_reader_node
+from jober.agents.onboarding_preferences import onboarding_preferences_node, extract_preferences_node
 from jober.agents.orchestrator import build_init_graph, build_apply_graph
 from jober.utils.file_io import save_perfil_maestro, load_perfil_maestro, save_application_output
 from jober.utils.tracking import add_record, get_stats
+from jober.cli.autonomous import autonomous_run_loop
 
 app = typer.Typer(
     name="jober",
@@ -124,15 +126,31 @@ def init():
         console.print(f"[red]❌ Error: {result.error}[/red]")
         raise typer.Exit(1)
 
-    # Guardar perfil
+    # 4. Onboarding de preferencias laborales
+    console.print("\n[cyan]\U0001f4ac Ahora vamos a configurar tus preferencias de búsqueda...[/cyan]")
+    console.print("[dim]Responde en lenguaje natural. Puedes ser informal.[/dim]\n")
+    
+    preferences_result = asyncio.run(run_preferences_flow(result.perfil))
+    
+    if preferences_result.get("error"):
+        console.print(f"[yellow]\u26a0\ufe0f  No se pudieron configurar preferencias: {preferences_result['error']}[/yellow]")
+        console.print("[dim]Puedes configurarlas manualmente editando el perfil maestro.[/dim]")
+    else:
+        result.perfil = preferences_result["perfil"]
+    
+    # Guardar perfil completo
     save_perfil_maestro(result.perfil)
     console.print(Panel.fit(
-        f"[bold green]✅ Perfil maestro guardado en {PERFIL_MAESTRO_PATH}[/bold green]\n"
-        f"Nombre: {result.perfil.nombre}\n"
-        f"Título: {result.perfil.titulo_profesional}\n"
-        f"Habilidades: {len(result.perfil.habilidades_tecnicas)} técnicas, "
-        f"{len(result.perfil.habilidades_blandas)} blandas\n"
-        f"Experiencias: {len(result.perfil.experiencias)}",
+        f"[bold green]\u2705 Perfil maestro guardado en {PERFIL_MAESTRO_PATH}[/bold green]\n\n"
+        f"\U0001f464 Nombre: {result.perfil.nombre}\n"
+        f"\U0001f4bc Título: {result.perfil.titulo_profesional}\n"
+        f"\U0001f4aa Habilidades: {len(result.perfil.habilidades_tecnicas)} técnicas, {len(result.perfil.habilidades_blandas)} blandas\n"
+        f"\U0001f4c8 Experiencias: {len(result.perfil.experiencias)}\n\n"
+        f"[cyan]Preferencias de búsqueda:[/cyan]\n"
+        f"  Roles: {', '.join(result.perfil.preferencias.roles_deseados[:3]) or 'No especificado'}\n"
+        f"  Match mínimo: {result.perfil.preferencias.min_match_score:.0%}\n"
+        f"  Max aplicaciones/día: {result.perfil.preferencias.max_aplicaciones_por_dia}\n\n"
+        f"[bold yellow]\u27a1\ufe0f  Ejecuta 'jober run' para iniciar la búsqueda autónoma[/bold yellow]",
         border_style="green",
     ))
 
@@ -272,6 +290,21 @@ def status():
     for label, ok in checks.items():
         icon = "[green]✅[/green]" if ok else "[red]❌[/red]"
         console.print(f"  {icon} {label}")
+
+
+# ── jober run ───────────────────────────────────────────────────────────────
+
+@app.command()
+def run(
+    max_iterations: int = typer.Option(None, "--max-iterations", "-n", help="Número máximo de iteraciones (None = infinito)"),
+):
+    """Iniciar búsqueda autónoma continua de ofertas y aplicación automática."""
+    perfil = load_perfil_maestro()
+    if perfil is None:
+        console.print("[red]⚠️  No hay perfil maestro. Ejecuta 'jober init' primero.[/red]")
+        raise typer.Exit(1)
+    
+    asyncio.run(autonomous_run_loop(max_iterations=max_iterations))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,31 @@ class Educacion(BaseModel):
         return data
 
 
+class PreferenciasLaborales(BaseModel):
+    """Preferencias del usuario para búsqueda autónoma de trabajo."""
+    
+    # Qué tipo de trabajo busca
+    roles_deseados: list[str] = Field(default_factory=list)  # ej: ["Data Scientist", "ML Engineer"]
+    industrias_preferidas: list[str] = Field(default_factory=list)  # ej: ["FinTech", "HealthTech"]
+    modalidad: list[str] = Field(default_factory=lambda: ["remoto", "hibrido"])  # remoto, hibrido, presencial
+    ubicaciones: list[str] = Field(default_factory=list)  # ej: ["Santiago", "Remote"]
+    
+    # Tolerancia a match incompleto
+    min_match_score: float = 0.6  # Aplica si match >= 60%
+    aplicar_sin_100_requisitos: bool = True  # Acepta que no cumple todos los requisitos
+    
+    # Habilidades críticas vs nice-to-have
+    habilidades_must_have: list[str] = Field(default_factory=list)  # Debe tener al menos una
+    habilidades_nice_to_have: list[str] = Field(default_factory=list)
+    
+    # Plataformas activas
+    plataformas_activas: list[str] = Field(default_factory=lambda: ["getonbrd", "linkedin", "meetfrank"])
+    
+    # Control de ritmo
+    max_aplicaciones_por_dia: int = 10
+    delay_entre_aplicaciones_segundos: int = 60
+
+
 class PerfilMaestro(BaseModel):
     nombre: str = ""
     titulo_profesional: str = ""
@@ -60,6 +85,9 @@ class PerfilMaestro(BaseModel):
     educacion: list[Educacion] = Field(default_factory=list)
     idiomas: list[str] = Field(default_factory=list)
     links: dict[str, str] = Field(default_factory=dict)
+    
+    # Preferencias de búsqueda autónoma
+    preferencias: PreferenciasLaborales = Field(default_factory=PreferenciasLaborales)
 
     @model_validator(mode="before")
     @classmethod
