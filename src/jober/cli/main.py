@@ -36,8 +36,9 @@ from jober.core.config import (
 from jober.core.models import RegistroPostulacion, EstadoPostulacion
 from jober.core.state import JoberState
 from jober.agents.cv_reader import extract_text_from_cvs, cv_reader_node
-from jober.agents.onboarding_preferences import onboarding_preferences_node, extract_preferences_node
+from jober.agents.auto_apply import auto_apply_to_job
 from jober.agents.orchestrator import build_init_graph, build_apply_graph
+from jober.cli.preferences_flow import run_preferences_flow
 from jober.utils.file_io import save_perfil_maestro, load_perfil_maestro, save_application_output
 from jober.utils.tracking import add_record, get_stats
 from jober.cli.autonomous import autonomous_run_loop
@@ -48,6 +49,21 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console(force_terminal=True)
+
+
+def _estado_from_application_result(enviado: bool, mensaje: str) -> EstadoPostulacion:
+    if enviado:
+        return EstadoPostulacion.APLICADO
+    if any(
+        marker in mensaje
+        for marker in [
+            "Formulario con campos requeridos no soportados.",
+            "No se encontro un boton de envio compatible.",
+            "No existe el PDF del CV adaptado para subir.",
+        ]
+    ):
+        return EstadoPostulacion.PREPARADO
+    return EstadoPostulacion.FALLIDO
 
 
 # ── jober init ──────────────────────────────────────────────────────────────
@@ -137,6 +153,13 @@ def init():
         console.print("[dim]Puedes configurarlas manualmente editando el perfil maestro.[/dim]")
     else:
         result.perfil = preferences_result["perfil"]
+
+    if not result.perfil.email:
+        result.perfil.email = Prompt.ask("[yellow]📧 Email para postulaciones[/yellow]")
+    if not result.perfil.telefono:
+        result.perfil.telefono = Prompt.ask("[yellow]📱 Teléfono para postulaciones[/yellow]", default="")
+    if not result.perfil.ubicacion_actual:
+        result.perfil.ubicacion_actual = Prompt.ask("[yellow]📍 Ubicación actual[/yellow]", default="")
     
     # Guardar perfil completo
     save_perfil_maestro(result.perfil)
@@ -213,8 +236,29 @@ def apply(
         console.print(f"[red]❌ Error: {result.error}[/red]")
         raise typer.Exit(1)
 
+    if not result.should_apply:
+        notes = "\n".join(f"- {note}" for note in result.screening_notes) or "- Oferta filtrada"
+        console.print(Panel.fit(
+            f"[bold yellow]Oferta filtrada antes de generar documentos[/bold yellow]\n\n{notes}",
+            border_style="yellow",
+        ))
+        raise typer.Exit(0)
+
     # Guardar output
     output_dir = save_application_output(result.oferta, result.documentos)
+    application_result = asyncio.run(
+        auto_apply_to_job(
+            result.oferta,
+            result.perfil,
+            output_dir / "cv_adaptado.pdf",
+            cover_letter_pdf=output_dir / "cover_letter.pdf",
+            cover_letter_md=result.documentos.cover_letter_md,
+        )
+    )
+    result.resultado_aplicacion = application_result
+    save_application_output(result.oferta, result.documentos, application_result)
+
+    estado = _estado_from_application_result(application_result.enviado, application_result.mensaje)
 
     # Registrar en tracking
     record = RegistroPostulacion(
@@ -222,8 +266,9 @@ def apply(
         cargo=result.oferta.titulo,
         plataforma=result.oferta.plataforma,
         url=url,
-        estado=EstadoPostulacion.APLICADO,
+        estado=estado,
         carpeta_output=str(output_dir),
+        notas=application_result.mensaje,
     )
     add_record(record)
 
@@ -235,6 +280,8 @@ def apply(
         f"📍 Ubicación: {result.oferta.ubicacion}\n"
         f"🎯 Match Score: {result.documentos.match_score:.0%}\n"
         f"📝 Análisis: {result.documentos.analisis_fit}\n\n"
+        f"📨 Resultado auto-apply: {'Enviado' if application_result.enviado else 'No enviado'}\n"
+        f"ℹ️ Estado: {application_result.mensaje}\n\n"
         f"📂 Archivos guardados en:\n   {output_dir}",
         border_style="green",
     ))

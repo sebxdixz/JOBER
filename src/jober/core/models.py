@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -69,8 +69,10 @@ class PreferenciasLaborales(BaseModel):
     # ── Preferencias de búsqueda ────────────────────────────────────────────
     industrias_preferidas: list[str] = Field(default_factory=list)
     tipo_empresa: list[str] = Field(default_factory=list)  # startup, corporativo, pyme, etc.
-    modalidad: list[str] = Field(default_factory=lambda: ["remoto", "hibrido"])
-    ubicaciones: list[str] = Field(default_factory=list)
+    modalidad: List[str] = Field(default_factory=lambda: ["remoto", "hibrido", "presencial"])
+    ubicaciones: List[str] = Field(default_factory=list)
+    paises_permitidos: List[str] = Field(default_factory=list)  # ["Chile", "Argentina", "Remote"]
+    paises_excluidos: List[str] = Field(default_factory=list)  # ["Estados Unidos", "USA"]
     disponibilidad: str = "inmediata"  # inmediata, 2 semanas, 1 mes, etc.
     jornada: str = "full-time"  # full-time, part-time, freelance, contrato
 
@@ -103,6 +105,9 @@ class PreferenciasLaborales(BaseModel):
 
 class PerfilMaestro(BaseModel):
     nombre: str = ""
+    email: str = ""
+    telefono: str = ""
+    ubicacion_actual: str = ""
     titulo_profesional: str = ""
     resumen: str = ""
     habilidades_tecnicas: list[str] = Field(default_factory=list)
@@ -153,8 +158,10 @@ class OfertaTrabajo(BaseModel):
 # ── Tracking ────────────────────────────────────────────────────────────────
 
 class EstadoPostulacion(str, Enum):
+    PREPARADO = "preparado"
     PENDIENTE = "pendiente"
     APLICADO = "aplicado"
+    FALLIDO = "fallido"
     ENTREVISTA = "entrevista"
     RECHAZADO = "rechazado"
     OFERTA = "oferta"
@@ -179,3 +186,12 @@ class DocumentosGenerados(BaseModel):
     qa_respuestas: dict[str, str] = Field(default_factory=dict)
     match_score: float = 0.0
     analisis_fit: str = ""
+
+
+class ResultadoAplicacion(BaseModel):
+    enviado: bool = False
+    metodo: str = ""
+    plataforma: str = ""
+    url_final: str = ""
+    mensaje: str = ""
+    detalles: dict[str, str] = Field(default_factory=dict)

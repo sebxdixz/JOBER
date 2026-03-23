@@ -12,7 +12,12 @@ from jober.core.config import (
     POSTULACIONES_DIR,
     ensure_jober_dirs,
 )
-from jober.core.models import DocumentosGenerados, OfertaTrabajo, PerfilMaestro
+from jober.core.models import (
+    DocumentosGenerados,
+    OfertaTrabajo,
+    PerfilMaestro,
+    ResultadoAplicacion,
+)
 from jober.utils.pdf_export import export_cv_to_pdf, export_cover_letter_to_pdf
 
 
@@ -36,6 +41,7 @@ def load_perfil_maestro() -> PerfilMaestro | None:
 def save_application_output(
     oferta: OfertaTrabajo,
     documentos: DocumentosGenerados,
+    resultado_aplicacion: ResultadoAplicacion | None = None,
 ) -> Path:
     """Guarda los documentos generados (Markdown + PDF) en una carpeta por postulación."""
     ensure_jober_dirs()
@@ -96,12 +102,18 @@ def save_application_output(
         oferta.model_dump_json(indent=2), encoding="utf-8"
     )
 
+    if resultado_aplicacion is not None:
+        (output_dir / "application_result.json").write_text(
+            resultado_aplicacion.model_dump_json(indent=2), encoding="utf-8"
+        )
+
     return output_dir
 
 
 async def save_application_output_async(
     oferta: OfertaTrabajo,
     documentos: DocumentosGenerados,
+    resultado_aplicacion: ResultadoAplicacion | None = None,
 ) -> Path:
     """Versión async de save_application_output (para uso dentro de jober run)."""
     ensure_jober_dirs()
@@ -156,5 +168,10 @@ async def save_application_output_async(
     (output_dir / "oferta_original.json").write_text(
         oferta.model_dump_json(indent=2), encoding="utf-8"
     )
+
+    if resultado_aplicacion is not None:
+        (output_dir / "application_result.json").write_text(
+            resultado_aplicacion.model_dump_json(indent=2), encoding="utf-8"
+        )
 
     return output_dir

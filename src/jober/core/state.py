@@ -12,6 +12,7 @@ from jober.core.models import (
     DocumentosGenerados,
     OfertaTrabajo,
     PerfilMaestro,
+    ResultadoAplicacion,
 )
 
 
@@ -28,9 +29,12 @@ class JoberState(BaseModel):
     # Datos de la oferta
     oferta: OfertaTrabajo = Field(default_factory=OfertaTrabajo)
     job_url: str = ""
+    should_apply: bool = False
+    screening_notes: list[str] = Field(default_factory=list)
 
     # Output generado por los agentes
     documentos: DocumentosGenerados = Field(default_factory=DocumentosGenerados)
+    resultado_aplicacion: ResultadoAplicacion = Field(default_factory=ResultadoAplicacion)
 
     # Control de flujo
     current_agent: str = ""

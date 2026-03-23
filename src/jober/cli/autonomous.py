@@ -8,13 +8,10 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.live import Live
-from rich.table import Table
 
-from jober.agents.autonomous_search import find_new_opportunities, is_relevant_offer
-from jober.agents.job_scraper import job_scraper_node
-from jober.agents.cv_writer import cv_writer_node
-from jober.core.config import POSTULACIONES_DIR
+from jober.agents.auto_apply import auto_apply_to_job
+from jober.agents.autonomous_search import find_new_opportunities
+from jober.agents.orchestrator import build_apply_graph
 from jober.core.models import RegistroPostulacion, EstadoPostulacion
 from jober.core.state import JoberState
 from jober.utils.file_io import load_perfil_maestro, save_application_output_async
@@ -22,6 +19,21 @@ from jober.utils.tracking import add_record, read_all_records
 
 
 console = Console()
+
+
+def _estado_from_application_result(enviado: bool, mensaje: str) -> EstadoPostulacion:
+    if enviado:
+        return EstadoPostulacion.APLICADO
+    if any(
+        marker in mensaje
+        for marker in [
+            "Formulario con campos requeridos no soportados.",
+            "No se encontro un boton de envio compatible.",
+            "No existe el PDF del CV adaptado para subir.",
+        ]
+    ):
+        return EstadoPostulacion.PREPARADO
+    return EstadoPostulacion.FALLIDO
 
 
 async def autonomous_run_loop(max_iterations: int | None = None):
@@ -34,6 +46,7 @@ async def autonomous_run_loop(max_iterations: int | None = None):
         return
     
     prefs = perfil.preferencias
+    apply_graph = build_apply_graph()
     console.print(Panel.fit(
         f"[bold cyan]🤖 Modo Autónomo Activado[/bold cyan]\n\n"
         f"Roles: {', '.join(prefs.roles_deseados[:3]) or 'Cualquiera'}\n"
@@ -92,37 +105,25 @@ async def autonomous_run_loop(max_iterations: int | None = None):
                 console.print(f"\n[cyan]📄 [{idx}/{len(urls_nuevas)}] Analizando: {url[:80]}...[/cyan]")
                 
                 try:
-                    # Scrapear oferta
                     state = JoberState(job_url=url, perfil=perfil)
-                    scrape_result = await job_scraper_node(state)
-                    
-                    if scrape_result.get("error"):
-                        console.print(f"[red]  ✗ Error al scrapear: {scrape_result['error'][:100]}[/red]")
+                    result = await apply_graph.ainvoke(state)
+
+                    if isinstance(result, dict):
+                        result = JoberState(**{k: v for k, v in result.items() if k in JoberState.model_fields})
+
+                    if result.error:
+                        console.print(f"[red]  ✗ Error en pipeline: {result.error[:100]}[/red]")
                         urls_procesadas.add(url)
                         continue
-                    
-                    oferta = scrape_result["oferta"]
-                    
-                    # Filtrar por relevancia
-                    if not is_relevant_offer(oferta, perfil):
-                        console.print(f"[yellow]  ⊘ No relevante (filtros de preferencias)[/yellow]")
+
+                    if not result.should_apply:
+                        motivo = " | ".join(result.screening_notes[:3])
+                        console.print(f"[yellow]  ⊘ Filtrada por screening: {motivo}[/yellow]")
                         urls_procesadas.add(url)
                         continue
-                    
-                    # Generar CV adaptado + análisis de match
-                    state_with_offer = JoberState(
-                        job_url=url,
-                        perfil=perfil,
-                        oferta=oferta,
-                    )
-                    writer_result = await cv_writer_node(state_with_offer)
-                    
-                    if writer_result.get("error"):
-                        console.print(f"[red]  ✗ Error al generar CV: {writer_result['error'][:100]}[/red]")
-                        urls_procesadas.add(url)
-                        continue
-                    
-                    docs = writer_result["documentos"]
+
+                    oferta = result.oferta
+                    docs = result.documentos
                     
                     # Verificar match mínimo
                     if docs.match_score < prefs.min_match_score:
@@ -132,29 +133,43 @@ async def autonomous_run_loop(max_iterations: int | None = None):
                     
                     # Guardar aplicación (Markdown + PDF)
                     output_dir = await save_application_output_async(oferta, docs)
+                    application_result = await auto_apply_to_job(
+                        oferta,
+                        perfil,
+                        output_dir / "cv_adaptado.pdf",
+                        cover_letter_pdf=output_dir / "cover_letter.pdf",
+                        cover_letter_md=docs.cover_letter_md,
+                    )
+                    await save_application_output_async(oferta, docs, application_result)
+                    estado = _estado_from_application_result(
+                        application_result.enviado,
+                        application_result.mensaje,
+                    )
                     
                     record = RegistroPostulacion(
                         empresa=oferta.empresa,
                         cargo=oferta.titulo,
                         plataforma=oferta.plataforma,
                         url=url,
-                        estado=EstadoPostulacion.APLICADO,
+                        estado=estado,
                         carpeta_output=str(output_dir),
-                        notas=f"Match: {docs.match_score:.0%} | Auto-aplicado",
+                        notas=f"Match: {docs.match_score:.0%} | {application_result.mensaje}",
                     )
                     add_record(record)
                     
-                    aplicaciones_hoy += 1
+                    if application_result.enviado:
+                        aplicaciones_hoy += 1
                     urls_procesadas.add(url)
                     
                     console.print(
-                        f"[bold green]  ✓ APLICADO[/bold green] | "
+                        f"[bold green]  {'✓ APLICADO' if application_result.enviado else '• PREPARADO'}[/bold green] | "
                         f"{oferta.empresa} - {oferta.titulo} | "
-                        f"Match: {docs.match_score:.0%}"
+                        f"Match: {docs.match_score:.0%} | "
+                        f"{application_result.mensaje}"
                     )
                     
                     # Delay entre aplicaciones
-                    if aplicaciones_hoy < prefs.max_aplicaciones_por_dia:
+                    if application_result.enviado and aplicaciones_hoy < prefs.max_aplicaciones_por_dia:
                         console.print(f"[dim]  Esperando {prefs.delay_entre_aplicaciones_segundos}s...[/dim]")
                         await asyncio.sleep(prefs.delay_entre_aplicaciones_segundos)
                 

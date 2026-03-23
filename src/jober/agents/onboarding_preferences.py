@@ -65,25 +65,38 @@ TEMAS QUE DEBES CUBRIR (en orden natural, no rígido):
    - ¿Qué idiomas habla y a qué nivel?
    - ¿Podría trabajar en inglés? (reuniones, documentación, etc.)
 
-6. CONDICIONES DE TRABAJO
-   - ¿Remoto, híbrido o presencial? ¿Hay flexibilidad?
-   - ¿Dónde vive? ¿Está dispuesto a reubicarse?
-   - ¿Full-time, part-time, freelance, contrato?
-   - ¿Disponibilidad inmediata o necesita tiempo?
+6. CONDICIONES DE TRABAJO (CRÍTICO - PREGUNTAR EXPLÍCITAMENTE)
+   - ¿Remoto, híbrido o presencial? ¿Acepta las tres o tiene preferencia estricta?
+   - Si dice "remoto", preguntar: ¿100% remoto o acepta híbrido?
+   - Si dice "presencial", preguntar: ¿En qué ciudad/país?
+   - ¿Dónde vive actualmente? ¿En qué país/ciudad?
+   - ¿Está dispuesto a reubicarse o solo trabajos en su zona?
+   - ¿Hay países donde NO quiere trabajar? (ej: "no Estados Unidos", "solo Latinoamérica")
+   - ¿Hay países donde SÍ le interesa trabajar? (ej: "Chile, Argentina, Remote")
+   - ¿Full-time, part-time, freelance, contrato? ¿Hay flexibilidad?
+   - ¿Disponibilidad inmediata o necesita preaviso?
 
-7. EXPECTATIVAS SALARIALES
-   - ¿Tiene un rango salarial en mente? (mínimo y ideal)
-   - ¿En qué moneda?
-   - ¿Es negociable si el proyecto es interesante?
+7. EXPECTATIVAS SALARIALES (CRÍTICO - SER ESPECÍFICO)
+   - ¿Cuál es el salario MÍNIMO que aceptaría? (ser claro: "no aplicar si pagan menos de X")
+   - ¿Cuál sería su salario IDEAL?
+   - ¿En qué moneda? (USD, CLP, EUR, etc.)
+   - ¿Es negociable si el proyecto es muy interesante pero paga un poco menos?
+   - Si no tiene un número exacto, preguntar: ¿Tiene un rango aproximado?
 
 8. TIPO DE EMPRESA E INDUSTRIA
    - ¿Startup, corporativo, pyme, gobierno?
    - ¿Alguna industria que le interese especialmente?
    - ¿Alguna industria que DESCARTE?
 
-9. DEAL BREAKERS
-   - ¿Hay algo que sea inaceptable para él? (ej: "no presencial", "no sin sueldo", "no más de X horas")
-   - ¿Algo que haya rechazado en trabajos anteriores?
+9. DEAL BREAKERS (LIMITANTES ABSOLUTAS - MUY IMPORTANTE)
+   - ¿Hay algo que sea COMPLETAMENTE inaceptable? Ejemplos:
+     * "No acepto 100% presencial"
+     * "No acepto menos de $X USD"
+     * "No acepto viajes frecuentes"
+     * "No acepto jornadas de más de X horas"
+     * "No acepto trabajar fines de semana"
+   - ¿Algo que haya hecho que rechace ofertas en el pasado?
+   - ¿Alguna condición que lo haría renunciar inmediatamente?
 
 10. MOTIVACIÓN Y CONTEXTO
     - ¿Por qué está buscando trabajo ahora? (primer empleo, cambio, crecimiento, despido, etc.)
@@ -125,13 +138,15 @@ Extrae TODA la información y devuelve un JSON con este schema exacto:
 
     "industrias_preferidas": ["industria1"],
     "tipo_empresa": ["startup", "corporativo"],
-    "modalidad": ["remoto", "hibrido"],
+    "modalidad": ["remoto", "hibrido", "presencial"],
     "ubicaciones": ["ciudad1", "Remote"],
+    "paises_permitidos": ["Chile", "Argentina", "Remote"],
+    "paises_excluidos": ["Estados Unidos", "USA"],
     "disponibilidad": "inmediata",
     "jornada": "full-time",
 
-    "salario_minimo": "$X",
-    "salario_ideal": "$Y",
+    "salario_minimo": "$2000 USD",
+    "salario_ideal": "$3000 USD",
     "moneda_preferida": "USD|CLP|EUR|etc",
     "acepta_negociar_salario": true,
 
@@ -140,7 +155,7 @@ Extrae TODA la información y devuelve un JSON con este schema exacto:
     "max_anos_experiencia_extra": 2,
     "abierto_a_roles_similares": true,
 
-    "deal_breakers": ["cosa inaceptable 1"],
+    "deal_breakers": ["100% presencial obligatorio", "menos de $X USD", "viajes frecuentes"],
     "idiomas_requeridos": ["Español - Nativo", "Inglés - Avanzado"],
 
     "motivacion": "Por qué busca trabajo",
@@ -152,11 +167,15 @@ Extrae TODA la información y devuelve un JSON con este schema exacto:
     "delay_entre_aplicaciones_segundos": 60
 }}
 
-REGLAS:
+REGLAS CRÍTICAS:
 - Extrae SOLO lo que el usuario mencionó explícitamente.
 - Si algo no se mencionó, usa valores razonables por defecto basados en el contexto.
 - Para nivel_experiencia, inférelo de los años y tipo de cargos mencionados.
 - Para min_match_score, si dijo "aplico aunque no cumpla todo" usa 0.55; si dijo "solo los que calzo" usa 0.75.
+- IMPORTANTE: Si mencionó países donde NO quiere trabajar, ponlos en "paises_excluidos".
+- IMPORTANTE: Si mencionó países donde SÍ quiere trabajar, ponlos en "paises_permitidos".
+- IMPORTANTE: Si mencionó un salario mínimo, ponlo en "salario_minimo" con formato "$X USD" o "$X CLP".
+- IMPORTANTE: Si mencionó condiciones inaceptables (ej: "no presencial"), ponlas en "deal_breakers".
 - Responde SOLO con el JSON válido, sin texto adicional."""
 
 

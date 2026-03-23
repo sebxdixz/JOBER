@@ -18,7 +18,7 @@ Tu tarea es extraer TODA la información relevante del texto de un CV y devolver
 que siga exactamente el schema de PerfilMaestro.
 
 Extrae:
-- nombre, titulo_profesional, resumen
+- nombre, email, telefono, ubicacion_actual, titulo_profesional, resumen
 - habilidades_tecnicas (lista de tecnologías, herramientas, lenguajes)
 - habilidades_blandas
 - experiencias (empresa, cargo, fechas, descripción, tecnologías usadas)

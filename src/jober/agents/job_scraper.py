@@ -1,6 +1,11 @@
-"""Agente scraper de ofertas — usa Playwright para extraer datos de ofertas laborales."""
+"""Agente scraper de ofertas.
+
+Prefiere HTTP simple y usa Playwright solo como fallback.
+"""
 
 from __future__ import annotations
+
+from urllib.request import Request, urlopen
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -41,25 +46,74 @@ def detect_platform(url: str) -> str:
     return "unknown"
 
 
+def fetch_job_page_http(url: str) -> str:
+    """Obtiene HTML de una oferta usando HTTP simple."""
+    request = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+        },
+    )
+    with urlopen(request, timeout=20) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, errors="replace")
+
+
 async def scrape_job_page(url: str) -> str:
-    """Usa Playwright para obtener el contenido de la página de la oferta."""
+    """Obtiene el contenido de la pagina de la oferta.
+
+    Estrategia:
+    1. HTTP simple
+    2. Fallback a Playwright si la pagina viene vacia o muy pobre
+    """
+    try:
+        html = fetch_job_page_http(url)
+        if html and len(html) > 2000:
+            return html
+    except Exception:
+        pass
+
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-extensions",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
+            ]
+        )
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
-            )
+            ),
+            viewport={"width": 1280, "height": 720}
         )
         page = await context.new_page()
 
         try:
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
+            # Usar domcontentloaded en lugar de networkidle para mayor velocidad
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            # Reducir timeout de espera
+            await page.wait_for_timeout(1000)
             content = await page.content()
+        except Exception as e:
+            # Si falla, intentar con una espera más larga
+            try:
+                await page.wait_for_timeout(2000)
+                content = await page.content()
+            except Exception:
+                raise e
         finally:
             await browser.close()
 

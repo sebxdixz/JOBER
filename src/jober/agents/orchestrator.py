@@ -8,6 +8,7 @@ from jober.core.state import JoberState
 from jober.agents.cv_reader import cv_reader_node
 from jober.agents.cv_writer import cv_writer_node
 from jober.agents.job_scraper import job_scraper_node
+from jober.agents.offer_evaluator import offer_evaluator_node
 from jober.agents.onboarding import onboarding_interview_node, merge_profile_node
 
 
@@ -51,6 +52,15 @@ def _should_continue_apply(state: JoberState) -> str:
     """Router post-scraping."""
     if state.error:
         return END
+    return "offer_evaluator"
+
+
+def _should_continue_after_evaluation(state: JoberState) -> str:
+    """Router post-evaluacion."""
+    if state.error:
+        return END
+    if not state.should_apply:
+        return END
     return "cv_writer"
 
 
@@ -59,12 +69,21 @@ def build_apply_graph() -> StateGraph:
     graph = StateGraph(JoberState)
 
     graph.add_node("job_scraper", job_scraper_node)
+    graph.add_node("offer_evaluator", offer_evaluator_node)
     graph.add_node("cv_writer", cv_writer_node)
 
     graph.set_entry_point("job_scraper")
     graph.add_conditional_edges(
         "job_scraper",
         _should_continue_apply,
+        {
+            "offer_evaluator": "offer_evaluator",
+            END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        "offer_evaluator",
+        _should_continue_after_evaluation,
         {
             "cv_writer": "cv_writer",
             END: END,

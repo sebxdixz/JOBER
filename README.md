@@ -1,8 +1,8 @@
 # 🚀 Jober CLI
 
-**Sistema autónomo multiagente LangGraph que busca, filtra y aplica a ofertas laborales 24/7 desde la terminal.**
+**Sistema autónomo multiagente LangGraph que busca, filtra y puede auto-postular a ofertas laborales 24/7 desde la terminal.**
 
-Jober es un agente autónomo que trabaja por ti mientras duermes. Configuras tus preferencias una vez en lenguaje natural, y Jober recorre plataformas de empleo, filtra ofertas relevantes, genera CVs adaptados y aplica automáticamente — todo local, privado y sin intervención humana.
+Jober es un agente autónomo que trabaja por ti mientras duermes. Configuras tus preferencias una vez en lenguaje natural, y Jober recorre plataformas de empleo, filtra ofertas relevantes, genera CVs adaptados y puede intentar postular automáticamente en flujos web compatibles — todo local, privado y sin depender de un backend propio.
 
 ---
 
@@ -15,7 +15,7 @@ Jober es un agente autónomo que trabaja por ti mientras duermes. Configuras tus
 - **CV y Cover Letter en PDF:** Genera documentos profesionales adaptados a cada oferta, listos para enviar.
 - **Privacidad Local:** Tus datos nunca salen de `~/.jober/`. Sin cloud, sin tracking.
 - **Rate Limiting Inteligente:** Controla aplicaciones/día y delays para no saturar plataformas.
-- **Tracking Automático:** CSV con historial completo de todas las aplicaciones.
+- **Tracking Honesto:** CSV con historial de postulaciones enviadas, preparadas o fallidas.
 
 ---
 
@@ -65,7 +65,7 @@ Jober entrará en un loop infinito que:
 - Filtra por tus preferencias
 - Scrapea y analiza cada oferta
 - Genera CV adaptado + cover letter
-- Aplica automáticamente si match >= tu mínimo
+- Intenta postular automáticamente si el formulario es compatible y el match >= tu mínimo
 - Respeta límites diarios y delays
 
 **Presiona `Ctrl+C` para detener.**
@@ -81,6 +81,12 @@ jober apply "https://www.getonbrd.com/empleos/..."
 ```bash
 jober stats
 ```
+
+### Notas sobre auto-apply
+
+- Jober solo marca una oferta como `aplicado` si detecta una postulación real enviada.
+- Si encuentra un formulario con campos requeridos no soportados, la deja como `preparado`.
+- El resultado detallado de cada intento queda en `application_result.json` dentro de la carpeta de la postulación.
 
 ---
 
