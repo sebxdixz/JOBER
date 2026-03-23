@@ -9,7 +9,7 @@ from langchain_openai import ChatOpenAI
 from pydantic_settings import BaseSettings
 
 
-JOBER_HOME = Path.home() / ".jober"
+JOBER_HOME = Path(os.getenv("JOBER_HOME", str(Path.home() / ".jober"))).expanduser()
 JOBER_ENV_FILE = JOBER_HOME / ".env"
 CV_BASE_DIR = JOBER_HOME / "cv_base"
 POSTULACIONES_DIR = JOBER_HOME / "postulaciones"

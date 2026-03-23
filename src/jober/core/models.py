@@ -181,6 +181,7 @@ class RegistroPostulacion(BaseModel):
 # ── Documentos Generados ───────────────────────────────────────────────────
 
 class DocumentosGenerados(BaseModel):
+    cv_adaptado_tex: str = ""
     cv_adaptado_md: str = ""
     cover_letter_md: str = ""
     qa_respuestas: dict[str, str] = Field(default_factory=dict)

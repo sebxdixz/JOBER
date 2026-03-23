@@ -1,0 +1,25 @@
+{
+  "url": "https://www.getonbrd.com/empleos/programacion/backend-developer-node-js-aws-bc-tecnologia-remote/?gb_medium=widget_related_jobs&gb_name=backend-developer-node-js-aws-bc-tecnologia-remote",
+  "titulo": "Back-end Developer (Node.js / AWS)",
+  "empresa": "BC Tecnología",
+  "ubicacion": "Remote",
+  "modalidad": "remoto",
+  "descripcion": "BC Tecnología es una consultora de TI con experiencia en diferentes áreas tecnológicas, enfocada en servicios IT, desarrollo de proyectos, outsourcing y selección de profesionales. Diseñamos soluciones a la medida y promovemos un ambiente de aprendizaje y crecimiento profesional. Participarás en proyectos innovadores para clientes de alto nivel, en un entorno que valora el trabajo colaborativo, la excelencia técnica y la entrega de valor. Funciones: Desarrollar y mantener servicios backend escalables basados en Node.js y AWS, aplicando patrones de microservicios y eventos. Diseñar APIs (REST/GraphQL) y asegurar su calidad, rendimiento y escalabilidad. Integrar servicios y bases de datos SQL/NoSQL, aplicando buenas prácticas de desarrollo (Clean Code, patrones de diseño). Trabajar en soluciones desacopladas y orientadas a eventos, con pruebas unitarias e integración (Jest). Colaborar en equipos ágiles, participar en revisiones de código, y apoyar la estimación y planificación de incidentes.",
+  "requisitos": [
+    "Al menos 3 años de experiencia en desarrollo backend, con Node.js y TypeScript",
+    "Experiencia con NestJS",
+    "Conocimiento en AWS (Lambda, SQS, SNS, S3, EventBridge, DynamoDB, DocumentDB)",
+    "Desarrollo de APIs REST/GraphQL",
+    "Arquitecturas de microservicios y eventos",
+    "Experiencia con testing (Jest)",
+    "Capacidad para trabajar de forma colaborativa en entornos ágiles"
+  ],
+  "nice_to_have": [
+    "Experiencia en DevOps, contenedores (Docker), CI/CD, resolviendo problemas de rendimiento y escalabilidad",
+    "Habilidades de comunicación en español e inglés a nivel técnico",
+    "Capacidad de aprendizaje continuo y autonomía para entregar resultados de alta calidad"
+  ],
+  "salario": "",
+  "plataforma": "getonbrd",
+  "fecha_scraping": "2026-03-23T14:21:49.018980"
+}

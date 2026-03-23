@@ -157,10 +157,24 @@ async def job_scraper_node(state: JoberState) -> dict:
 
     llm = get_llm(temperature=0.0)
 
-    response = await llm.ainvoke([
-        SystemMessage(content=EXTRACTION_PROMPT),
-        HumanMessage(content=f"URL: {url}\nPlataforma: {platform}\n\nContenido:\n{page_text}"),
-    ])
+    response = None
+    for attempt in range(3):
+        try:
+            response = await llm.ainvoke([
+                SystemMessage(content=EXTRACTION_PROMPT),
+                HumanMessage(content=f"URL: {url}\nPlataforma: {platform}\n\nContenido:\n{page_text}"),
+            ])
+            break
+        except Exception as exc:
+            if "429" in str(exc) or "rate" in str(exc).lower():
+                import asyncio
+
+                await asyncio.sleep(5 * (attempt + 1))
+                continue
+            return {"error": f"Error extrayendo oferta con LLM: {exc}"}
+
+    if response is None:
+        return {"error": "No se pudo extraer la oferta: rate limit del LLM."}
 
     try:
         clean_json = strip_markdown_fences(response.content)

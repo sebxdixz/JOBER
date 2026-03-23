@@ -18,7 +18,11 @@ from jober.core.models import (
     PerfilMaestro,
     ResultadoAplicacion,
 )
-from jober.utils.pdf_export import export_cv_to_pdf, export_cover_letter_to_pdf
+from jober.utils.pdf_export import (
+    export_cover_letter_to_pdf,
+    export_cv_to_pdf,
+    export_latex_to_pdf_sync,
+)
 
 
 def save_perfil_maestro(perfil: PerfilMaestro) -> Path:
@@ -55,16 +59,25 @@ def save_application_output(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # CV adaptado (Markdown + PDF)
+    if documentos.cv_adaptado_tex:
+        (output_dir / "cv_adaptado.tex").write_text(
+            documentos.cv_adaptado_tex, encoding="utf-8"
+        )
+
     if documentos.cv_adaptado_md:
         (output_dir / "cv_adaptado.md").write_text(
             documentos.cv_adaptado_md, encoding="utf-8"
         )
         try:
-            asyncio.run(
-                export_cv_to_pdf(documentos.cv_adaptado_md, output_dir / "cv_adaptado.pdf")
+            compiled = export_latex_to_pdf_sync(
+                documentos.cv_adaptado_tex,
+                output_dir / "cv_adaptado.pdf",
             )
-        except RuntimeError:
-            # Already inside an event loop (called from async context)
+            if compiled is None:
+                asyncio.run(
+                    export_cv_to_pdf(documentos.cv_adaptado_md, output_dir / "cv_adaptado.pdf")
+                )
+        except Exception:
             pass
 
     # Cover letter (Markdown + PDF)
@@ -78,7 +91,7 @@ def save_application_output(
                     documentos.cover_letter_md, output_dir / "cover_letter.pdf"
                 )
             )
-        except RuntimeError:
+        except Exception:
             pass
 
     # QA respuestas
@@ -127,12 +140,22 @@ async def save_application_output_async(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # CV adaptado (Markdown + PDF)
+    if documentos.cv_adaptado_tex:
+        (output_dir / "cv_adaptado.tex").write_text(
+            documentos.cv_adaptado_tex, encoding="utf-8"
+        )
+
     if documentos.cv_adaptado_md:
         (output_dir / "cv_adaptado.md").write_text(
             documentos.cv_adaptado_md, encoding="utf-8"
         )
         try:
-            await export_cv_to_pdf(documentos.cv_adaptado_md, output_dir / "cv_adaptado.pdf")
+            compiled = export_latex_to_pdf_sync(
+                documentos.cv_adaptado_tex,
+                output_dir / "cv_adaptado.pdf",
+            )
+            if compiled is None:
+                await export_cv_to_pdf(documentos.cv_adaptado_md, output_dir / "cv_adaptado.pdf")
         except Exception:
             pass
 

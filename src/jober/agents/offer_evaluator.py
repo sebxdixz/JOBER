@@ -36,6 +36,30 @@ async def offer_evaluator_node(state: JoberState) -> dict:
         if not ubicacion_match:
             should_apply = False
             notes.append(f"Ubicacion fuera de preferencia: {oferta.ubicacion}")
+    
+    # Filtrado por países (permitidos/excluidos)
+    ubicacion_completa = f"{oferta.ubicacion or ''} {oferta.empresa or ''}".lower()
+    
+    # Verificar países excluidos
+    paises_excluidos = _normalize_many(prefs.paises_excluidos)
+    if should_apply and paises_excluidos:
+        for pais in paises_excluidos:
+            if pais in ubicacion_completa:
+                should_apply = False
+                notes.append(f"Pais excluido detectado: {pais}")
+                break
+    
+    # Verificar países permitidos (solo si se especificaron)
+    paises_permitidos = _normalize_many(prefs.paises_permitidos)
+    if should_apply and paises_permitidos:
+        pais_match = any(pais in ubicacion_completa for pais in paises_permitidos)
+        # Si es remoto, permitir si "remote" está en la lista
+        es_remoto = "remote" in ubicacion_completa or "remoto" in ubicacion_completa
+        tiene_remote_permitido = any(p in ["remote", "remoto"] for p in paises_permitidos)
+        
+        if not pais_match and not (es_remoto and tiene_remote_permitido):
+            should_apply = False
+            notes.append(f"Pais no permitido. Ubicacion: {oferta.ubicacion}")
 
     titulo = (oferta.titulo or "").strip().lower()
     roles = _normalize_many(prefs.roles_deseados)

@@ -1,0 +1,74 @@
+{
+  "nombre": "Sebastián Díaz de la Fuente",
+  "titulo_profesional": "Ingeniero Civil en Informática especializado en Ingeniería de Agentes de IA y Orquestación de LLMs",
+  "resumen": "Experto en el diseño de arquitecturas multi-agente cíclicas (Stateful) utilizando LangGraph y sistemas de validación estricta con Pydantic. Enfocado en resolver problemas de indeterminación en IA mediante pipelines de evaluación (RAGs) y despliegue escalable en Kubernetes. Busco liderar la implementación de fuerza de trabajo digital autónoma.",
+  "habilidades_tecnicas": [
+    "Python",
+    "SQL",
+    "Java Script",
+    "LangGraph",
+    "Pydantic",
+    "Docker",
+    "Kubernetes",
+    "PostgreSQL",
+    "RESTful APIs",
+    "ETL/ELT",
+    "RAGs",
+    "LLMs",
+    "Automation",
+    "OCR",
+    "CLI Development"
+  ],
+  "habilidades_blandas": [
+    "Liderazgo",
+    "Comunicación técnica",
+    "Resolución de problemas",
+    "Gestión de iniciativas",
+    "Organización",
+    "Visión profunda sobre problemáticas de retención y bienestar"
+  ],
+  "experiencias": [
+    {
+      "empresa": "Grupo Axo",
+      "cargo": "Data Scientist & Automation Analyst",
+      "fecha_inicio": "Enero 2025",
+      "fecha_fin": "Presente",
+      "descripcion": "Liderar la arquitectura de pipelines de datos autónomos, reemplazando análisis manual por flujos de decisión automatizados. Desarrollo de APIs RESTful asíncronas para exponer modelos predictivos. Diseño de orquestaciones ETL/ELT para ingesta masiva de datos. Diseñó un sistema multi-agente persistente con LangGraph y PostgreSQL, automatizando auditorías forenses. Implementó Pydantic para forzar 'Structured Output' estricto, reduciendo la tasa de alucinación en OCR a < 1%. Desarrolló 'Headhunter CLI', un agente de ventas autónomo. Desplegó la infraestructura de inferencia contenizada con Docker y orquestación escalable para Kubernetes.",
+      "tecnologias": []
+    },
+    {
+      "empresa": "Walmart",
+      "cargo": "Data Analytics Intern (Practicante)",
+      "fecha_inicio": "Junio 2024",
+      "fecha_fin": "Diciembre 2024",
+      "descripcion": "Automatizar la generación de inteligencia de negocios mediante consultas SQL avanzadas, optimizando tiempos de reporte gerencial en un 40%. Desarrollo de scripts de automatización en entornos Linux y Java Script para optimizar flujos críticos de Recursos Humanos.",
+      "tecnologias": []
+    },
+    {
+      "empresa": "Universidad Adolfo Ibáñez (UAI)",
+      "cargo": "Profesor y Ayudante",
+      "fecha_inicio": "2020",
+      "fecha_fin": "2024",
+      "descripcion": "Impartir clases de programación, desarrollando habilidades para comunicar conceptos técnicos complejos a audiencias en formación.",
+      "tecnologias": []
+    },
+    {
+      "empresa": "Universidad Adolfo Ibáñez (UAI)",
+      "cargo": "Secretario Ejecutivo Federación Universitaria (UAI)",
+      "fecha_inicio": "2020",
+      "fecha_fin": "2024",
+      "descripcion": "Gestión de iniciativas estudiantiles, otorgando una visión profunda sobre las problemáticas de retención, bienestar y experiencia universitaria.",
+      "tecnologias": []
+    }
+  ],
+  "educacion": [
+    {
+      "institucion": "Universidad Adolfo Ibáñez (UAI)",
+      "titulo": "Ingeniería Civil Informática",
+      "fecha_inicio": "2020",
+      "fecha_fin": "2024"
+    }
+  ],
+  "idiomas": [],
+  "links": {}
+}

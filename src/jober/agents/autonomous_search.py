@@ -111,7 +111,38 @@ async def find_new_opportunities(perfil: PerfilMaestro, max_per_platform: int = 
     prefs = perfil.preferencias
     all_urls: list[str] = []
 
-    keywords = prefs.roles_deseados[:3] + prefs.habilidades_must_have[:2]
+    # Mapeo inteligente de roles a keywords de búsqueda más amplias
+    role_keyword_map = {
+        "ai engineer": ["AI Engineer", "Machine Learning", "Python", "Data Scientist"],
+        "ml engineer": ["ML Engineer", "Machine Learning", "Python", "Data Scientist"],
+        "ml ops": ["MLOps", "DevOps", "Machine Learning", "Python"],
+        "machine learning engineer": ["Machine Learning", "ML Engineer", "Python", "Data Scientist"],
+        "data scientist": ["Data Scientist", "Machine Learning", "Python", "Analytics"],
+        "backend developer": ["Backend", "Python", "Node.js", "API"],
+        "frontend developer": ["Frontend", "React", "JavaScript", "Vue"],
+        "full stack": ["Full Stack", "Python", "JavaScript", "React"],
+    }
+    
+    # Expandir keywords basados en roles
+    expanded_keywords = []
+    for role in prefs.roles_deseados[:2]:
+        role_lower = role.lower()
+        if role_lower in role_keyword_map:
+            expanded_keywords.extend(role_keyword_map[role_lower][:2])
+        else:
+            expanded_keywords.append(role)
+    
+    # Agregar habilidades must-have
+    expanded_keywords.extend(prefs.habilidades_must_have[:2])
+    
+    # Remover duplicados manteniendo orden
+    seen = set()
+    keywords = []
+    for kw in expanded_keywords:
+        if kw.lower() not in seen:
+            seen.add(kw.lower())
+            keywords.append(kw)
+    
     if not keywords:
         keywords = [perfil.titulo_profesional] if perfil.titulo_profesional else ["developer"]
 
