@@ -25,15 +25,14 @@ cd JOBER
 pip install -e .
 ```
 
-Opcional (solo si quieres export PDF via navegador):
+**IMPORTANTE:** Playwright no instala navegadores por defecto. Ejecuta:
 
 ```bash
 playwright install chromium
 ```
 
-Opcional (mejor calidad PDF via LaTeX):
-
-- Instala `pdflatex` o `xelatex` y define en PATH.
+**IMPORTANTE:** Para exportar PDFs premium via LaTeX necesitas `pdflatex` o `xelatex` en PATH
+(TeX Live en Linux/macOS, MiKTeX en Windows). Si no estan presentes, JOBER usa el fallback HTML/ReportLab.
 
 ---
 

@@ -250,6 +250,14 @@ def _ordered_contexts(page: Page, frame_hints: Sequence[str] = ()) -> list[Playw
     return contexts
 
 
+def _find_greenhouse_frame(page: Page) -> Frame | None:
+    for frame in getattr(page, "frames", []):
+        frame_url = _normalize(getattr(frame, "url", ""))
+        if "greenhouse.io" in frame_url or "grnhse.com" in frame_url:
+            return frame
+    return None
+
+
 async def _wait_for_selector_safe(context: PlaywrightContext, selector: str) -> bool:
     try:
         await context.wait_for_selector(
@@ -645,6 +653,10 @@ async def _fill_greenhouse_fields(
     cover_letter_text: str,
     details: dict[str, str],
 ) -> None:
+    target_frame = _find_greenhouse_frame(page)
+    if target_frame is not None:
+        form_context = target_frame
+
     first_name, last_name = _split_name(perfil.nombre)
     links = _profile_links(perfil)
 
@@ -1370,13 +1382,11 @@ async def _route_apply(
             cover_letter_text,
         )
     if ats == "getonbrd":
-        return await _apply_getonbrd(
+        return _finalize_result(
+            _new_result(oferta, "getonbrd"),
             page,
-            oferta,
-            perfil,
-            cv_pdf,
-            cover_letter_pdf,
-            cover_letter_text,
+            enviado=False,
+            mensaje="Requiere sesión activa. Postulación manual recomendada.",
         )
 
     manual = _new_result(oferta, "unsupported")
@@ -1432,7 +1442,7 @@ async def auto_apply_to_job(
 
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
+            browser = await playwright.chromium.launch(headless=False, slow_mo=50)
             try:
                 context = await browser.new_context(
                     user_agent=REALISTIC_USER_AGENT,

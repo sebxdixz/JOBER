@@ -243,7 +243,7 @@ def export_latex_to_pdf_sync(tex_text: str, output_path: Path) -> Path | None:
     engine = shutil.which("pdflatex") or shutil.which("xelatex")
     if not engine or not tex_text.strip():
         return None
-    timeout_seconds = int(os.getenv("JOBER_LATEX_TIMEOUT_SECONDS", "15"))
+    timeout_seconds = 15
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
@@ -261,7 +261,7 @@ def export_latex_to_pdf_sync(tex_text: str, output_path: Path) -> Path | None:
                 cwd=tmp_path,
                 capture_output=True,
                 text=True,
-                timeout=timeout_seconds,
+                timeout=15,
             )
         except subprocess.TimeoutExpired:
             logger.error(

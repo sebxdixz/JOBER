@@ -435,7 +435,11 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
         if not desc_lower.strip():
             notes.append("Oferta sin descripcion clara; no se valida must-have.")
         else:
-            matched = [skill for skill in must_have if _contains_exact_term(desc_lower, skill)]
+            matched = []
+            for skill in must_have:
+                pattern = r"\b" + re.escape(skill) + r"\b"
+                if re.search(pattern, desc_lower, flags=re.IGNORECASE):
+                    matched.append(skill)
             if matched:
                 notes.append(f"Must-have detectadas: {', '.join(matched[:5])}")
                 score += min(0.3, 0.1 * len(matched))

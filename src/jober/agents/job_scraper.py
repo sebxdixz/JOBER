@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 from langchain_core.messages import HumanMessage, SystemMessage
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from jober.core.config import get_llm
 from jober.core.logging import logger
@@ -18,6 +19,15 @@ from jober.core.models import OfertaTrabajo
 from jober.core.prompts import get_prompt
 from jober.core.state import JoberState, view_state
 from jober.utils.llm_helpers import ainvoke_with_retry, strip_markdown_fences
+
+
+@retry(wait=wait_exponential(multiplier=2, min=4, max=10), stop=stop_after_attempt(3))
+async def _call_llm_with_retry(llm, prompt_messages, *, operation: str):
+    return await ainvoke_with_retry(
+        llm,
+        prompt_messages,
+        operation=operation,
+    )
 
 
 def detect_platform(url: str) -> str:
@@ -336,7 +346,7 @@ async def job_scraper_node(state: JoberState) -> dict:
 
     llm = get_llm(temperature=0.0)
     try:
-        response = await ainvoke_with_retry(
+        response = await _call_llm_with_retry(
             llm,
             [
                 SystemMessage(content=get_prompt("job_scraper_extraction")),
