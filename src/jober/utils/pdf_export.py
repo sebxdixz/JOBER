@@ -242,6 +242,15 @@ def export_latex_to_pdf_sync(tex_text: str, output_path: Path) -> Path | None:
     """Compile standalone LaTeX to PDF if a local engine is available."""
     engine = shutil.which("pdflatex") or shutil.which("xelatex")
     if not engine or not tex_text.strip():
+        if not engine:
+            logger.error(
+                "No se encontro pdflatex/xelatex en PATH. Instala TeX Live (Linux/macOS) "
+                "o MiKTeX (Windows) para exportar PDFs premium."
+            )
+            print(
+                "Aviso: no se encontro pdflatex/xelatex en PATH. "
+                "Instala TeX Live (Linux/macOS) o MiKTeX (Windows) para exportar PDFs premium."
+            )
         return None
     timeout_seconds = 15
 

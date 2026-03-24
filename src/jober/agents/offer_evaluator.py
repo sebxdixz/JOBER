@@ -5,6 +5,7 @@ Runs a cheap and explainable filter before spending LLM tokens.
 
 from __future__ import annotations
 
+import os
 import re
 
 from jober.core.models import OfertaTrabajo, PerfilMaestro
@@ -241,6 +242,9 @@ def evaluate_offer_for_scout(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tu
     prefs = perfil.preferencias
     notes: list[str] = []
     score = 0.0
+    allow_non_remote = os.getenv("JOBER_ALLOW_NON_REMOTE", "").strip().lower() in {"1", "true", "yes"}
+    allow_role_mismatch = os.getenv("JOBER_ALLOW_ROLE_MISMATCH", "").strip().lower() in {"1", "true", "yes"}
+    allow_seniority_mismatch = os.getenv("JOBER_ALLOW_SENIORITY_MISMATCH", "").strip().lower() in {"1", "true", "yes"}
 
     title = (oferta.titulo or "").strip()
     description = (oferta.descripcion or "").strip()
@@ -257,7 +261,7 @@ def evaluate_offer_for_scout(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tu
     ).lower()
     is_remote_offer = any(marker in remote_markers for marker in ["remote", "remoto", "work from home", "anywhere"])
 
-    if _remote_only_required(modalidades):
+    if not allow_non_remote and _remote_only_required(modalidades):
         if not is_remote_offer:
             return False, ["Solo remoto: la oferta no parece remota."], 0.0
         score += 0.3
@@ -268,7 +272,7 @@ def evaluate_offer_for_scout(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tu
 
     title_role_keywords = _build_title_role_keywords(prefs.roles_deseados)
     role_keywords = _build_role_keywords(prefs.roles_deseados)
-    if title_role_keywords:
+    if title_role_keywords and not allow_role_mismatch:
         title_match = _has_any_keyword(title, title_role_keywords)
         blob_match = _has_any_keyword(blob, role_keywords)
         if title_match:
@@ -284,9 +288,13 @@ def evaluate_offer_for_scout(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tu
     offer_level = _seniority_level_from_text(title)
     if user_level >= 0 and offer_level >= 0:
         if _seniority_is_too_high(user_level, offer_level):
-            return False, ["Seniority superior a tu nivel objetivo actual."], 0.0
-        score += 0.1
-        notes.append("Senioridad compatible.")
+            if not allow_seniority_mismatch:
+                return False, ["Seniority superior a tu nivel objetivo actual."], 0.0
+            notes.append("Senioridad superior, pero se permite explorar.")
+            score = max(0.0, score - 0.05)
+        else:
+            score += 0.1
+            notes.append("Senioridad compatible.")
 
     if _ai_intent(prefs.roles_deseados) and _has_ai_keywords(blob):
         score += 0.15
@@ -319,6 +327,9 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
     notes: list[str] = []
     should_apply = True
     score = 0.0
+    allow_non_remote = os.getenv("JOBER_ALLOW_NON_REMOTE", "").strip().lower() in {"1", "true", "yes"}
+    allow_role_mismatch = os.getenv("JOBER_ALLOW_ROLE_MISMATCH", "").strip().lower() in {"1", "true", "yes"}
+    allow_seniority_mismatch = os.getenv("JOBER_ALLOW_SENIORITY_MISMATCH", "").strip().lower() in {"1", "true", "yes"}
 
     modalidad = (oferta.modalidad or "").strip().lower()
     remote_markers = " ".join(
@@ -331,10 +342,10 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
     ).lower()
     is_remote_offer = any(marker in remote_markers for marker in ["remote", "remoto", "work from home", "anywhere"])
     modalidades = _normalize_many(prefs.modalidad)
-    if should_apply and _remote_only_required(modalidades) and not is_remote_offer:
+    if should_apply and not allow_non_remote and _remote_only_required(modalidades) and not is_remote_offer:
         should_apply = False
         notes.append("Solo remoto: oferta no indica modalidad remota.")
-    elif modalidades and modalidad and modalidad not in modalidades:
+    elif not allow_non_remote and modalidades and modalidad and modalidad not in modalidades:
         should_apply = False
         notes.append(f"Modalidad descartada: {oferta.modalidad}")
     elif modalidad:
@@ -376,7 +387,7 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
 
     titulo = (oferta.titulo or "").strip().lower()
     roles = _normalize_many(prefs.roles_deseados)
-    if should_apply and roles and titulo:
+    if should_apply and roles and titulo and not allow_role_mismatch:
         role_match = any(_contains_exact_term(titulo, role) for role in roles)
         if role_match:
             notes.append("Titulo alineado con roles deseados.")
@@ -397,7 +408,7 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
 
     desc_lower = (oferta.descripcion + " " + " ".join(oferta.requisitos)).lower()
     role_keywords = _build_role_keywords(prefs.roles_deseados)
-    if should_apply and role_keywords:
+    if should_apply and role_keywords and not allow_role_mismatch:
         blob = f"{titulo} {desc_lower}"
         if not any(_contains_exact_term(blob, keyword) for keyword in role_keywords):
             should_apply = False
@@ -407,8 +418,12 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
     offer_level = _seniority_level_from_text(f"{oferta.titulo} {desc_lower}")
     if should_apply and offer_level >= 0 and user_level >= 0:
         if _seniority_is_too_high(user_level, offer_level):
-            should_apply = False
-            notes.append("Oferta por encima de tu seniority objetivo actual.")
+            if not allow_seniority_mismatch:
+                should_apply = False
+                notes.append("Oferta por encima de tu seniority objetivo actual.")
+            else:
+                notes.append("Senioridad superior, pero se permite explorar.")
+                score = max(0.0, score - 0.05)
         else:
             score += 0.1
             notes.append("Senioridad compatible con tu nivel.")

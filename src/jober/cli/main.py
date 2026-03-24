@@ -33,6 +33,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt
 from langchain_core.messages import HumanMessage
+from playwright.async_api import async_playwright
 
 from jober.core.config import (
     JOBER_HOME,
@@ -65,7 +66,7 @@ from jober.utils.file_io import (
 )
 from jober.utils.runtime_status import update_status, upsert_job
 from jober.utils.status_server import start_status_server, stop_status_server
-from jober.utils.tracking import add_record, get_stats
+from jober.utils.tracking import add_record, get_stats, read_all_records
 from jober.cli.autonomous import autonomous_run_loop
 
 app = typer.Typer(
@@ -125,6 +126,11 @@ def _resolve_profile_id_input(
         if resolved is None:
             console.print("[yellow]Ingresa un ID valido usando letras, numeros, '-' o '_' .[/yellow]")
     return resolved
+
+
+def _linkedin_storage_state_path(profile_id: str) -> Path:
+    paths = ensure_profile_dirs(profile_id)
+    return paths.profile_dir / "playwright_storage.json"
 
 
 def _build_ai_remote_preferences(existing: PreferenciasLaborales | None = None) -> PreferenciasLaborales:
@@ -339,6 +345,17 @@ def apply(
         border_style="cyan",
     ))
 
+    if "linkedin.com/jobs/view/" in url:
+        storage_state_path = _linkedin_storage_state_path(profile_id)
+        if not storage_state_path.exists():
+            console.print(Panel.fit(
+                "[bold yellow]LinkedIn requiere sesion activa.[/bold yellow]\n"
+                "Ejecuta primero: jober login linkedin --profile "
+                f"{profile_id}",
+                border_style="yellow",
+            ))
+            raise typer.Exit(1)
+
     apply_graph = build_apply_graph()
     state = new_state(job_url=url, perfil=perfil)
 
@@ -458,6 +475,105 @@ def stats(
         table.add_row("", "")
         for platform, count in data["por_plataforma"].items():
             table.add_row(f"{platform}", str(count))
+
+    console.print(table)
+
+
+async def _login_with_playwright(storage_state_path: Path, provider: str) -> None:
+    login_url = "https://www.linkedin.com/login"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=50)
+        try:
+            context = await browser.new_context(
+                storage_state=str(storage_state_path) if storage_state_path.exists() else None
+            )
+            page = await context.new_page()
+            await page.goto(login_url, wait_until="domcontentloaded")
+            await asyncio.to_thread(
+                input,
+                "Cuando termines el login en el navegador, presiona ENTER aqui...",
+            )
+            await context.storage_state(path=str(storage_state_path))
+        finally:
+            await browser.close()
+
+
+@app.command()
+def login(
+    provider: str = typer.Argument(..., help="Proveedor de login (linkedin)"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Perfil a usar (default: activo)"),
+):
+    """Guardar sesion de login para proveedores (LinkedIn)."""
+    provider_key = provider.strip().lower()
+    if provider_key != "linkedin":
+        console.print("[red]Proveedor no soportado. Usa: linkedin[/red]")
+        raise typer.Exit(1)
+
+    profile_id = resolve_profile_id(profile)
+    paths = ensure_profile_dirs(profile_id)
+    storage_state_path = paths.profile_dir / "playwright_storage.json"
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Login {provider_key}[/bold cyan]\n"
+            f"Perfil: {profile_id}\n"
+            f"Sesion se guardara en: {storage_state_path}",
+            border_style="cyan",
+        )
+    )
+    console.print("[yellow]Se abrira un navegador visible. Inicia sesion y vuelve aqui.[/yellow]")
+    asyncio.run(_login_with_playwright(storage_state_path, provider_key))
+    console.print("[green]Sesion guardada. Puedes correr auto-apply y se reutilizara.[/green]")
+
+
+@app.command()
+def logout(
+    provider: str = typer.Argument(..., help="Proveedor de logout (linkedin)"),
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Perfil a usar (default: activo)"),
+):
+    """Eliminar sesion persistida (LinkedIn)."""
+    provider_key = provider.strip().lower()
+    if provider_key != "linkedin":
+        console.print("[red]Proveedor no soportado. Usa: linkedin[/red]")
+        raise typer.Exit(1)
+
+    profile_id = resolve_profile_id(profile)
+    storage_state_path = _linkedin_storage_state_path(profile_id)
+    if not storage_state_path.exists():
+        console.print("[yellow]No hay sesion guardada para este perfil.[/yellow]")
+        return
+
+    storage_state_path.unlink(missing_ok=True)
+    console.print("[green]Sesion eliminada.[/green]")
+
+
+@app.command()
+def review(
+    profile: str | None = typer.Option(None, "--profile", "-p", help="Perfil a usar (default: activo)"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Maximo de registros a mostrar"),
+):
+    """Revisar postulaciones recientes y estado de ofertas."""
+    profile_id = resolve_profile_id(profile)
+    records = read_all_records(profile_id)
+    if not records:
+        console.print("[yellow]No hay postulaciones registradas.[/yellow]")
+        return
+
+    table = Table(title=f"Postulaciones recientes ({profile_id})")
+    table.add_column("Fecha", style="cyan")
+    table.add_column("Empresa", style="green")
+    table.add_column("Cargo", style="white")
+    table.add_column("Estado", style="magenta")
+    table.add_column("Notas", style="dim")
+
+    for record in records[: max(limit, 1)]:
+        table.add_row(
+            record.fecha,
+            record.empresa or "-",
+            record.cargo or "-",
+            record.estado.value if hasattr(record.estado, "value") else str(record.estado),
+            (record.notas or "")[:120],
+        )
 
     console.print(table)
 

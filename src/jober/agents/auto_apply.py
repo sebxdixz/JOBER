@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 from urllib.parse import urlparse
 
 from playwright.async_api import (
+    Error as PlaywrightError,
     Frame,
     Locator,
     Page,
@@ -20,13 +21,14 @@ from playwright.async_api import (
     async_playwright,
 )
 
+from jober.core.config import ensure_profile_dirs, get_active_profile_id
 from jober.core.logging import logger
 from jober.core.models import OfertaTrabajo, PerfilMaestro, ResultadoAplicacion
 
 
-SHORT_TIMEOUT_MS = 5_000
-SELECTOR_TIMEOUT_MS = 1_500
-NAVIGATION_TIMEOUT_MS = 20_000
+SHORT_TIMEOUT_MS = 60_000
+SELECTOR_TIMEOUT_MS = 60_000
+NAVIGATION_TIMEOUT_MS = 60_000
 MAX_MULTI_STEP_ATTEMPTS = 4
 REALISTIC_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -35,6 +37,7 @@ REALISTIC_USER_AGENT = (
 )
 
 PlaywrightContext = Page | Frame
+TraceFn = Callable[[str], None]
 
 GREENHOUSE_FRAME_HINTS = ("greenhouse", "grnhse", "grnh.se")
 GREENHOUSE_FORM_SELECTORS = (
@@ -141,6 +144,33 @@ FALLBACK_NEXT_SELECTORS = (
     "button:has-text('Continuar')",
 )
 
+LINKEDIN_FORM_SELECTORS = (
+    "form",
+    "input[name*='first']",
+    "input[name*='last']",
+    "input[type='email']",
+    "input[type='tel']",
+)
+LINKEDIN_EASY_APPLY_SELECTORS = (
+    "button:has-text('Easy Apply')",
+    "button:has-text('Solicitud sencilla')",
+    "button:has-text('Solicitud fácil')",
+)
+LINKEDIN_NEXT_SELECTORS = (
+    "button:has-text('Next')",
+    "button:has-text('Review')",
+    "button:has-text('Continue')",
+    "button:has-text('Siguiente')",
+    "button:has-text('Revisar')",
+    "button:has-text('Continuar')",
+)
+LINKEDIN_SUBMIT_SELECTORS = (
+    "button:has-text('Submit application')",
+    "button:has-text('Submit')",
+    "button:has-text('Enviar solicitud')",
+    "button:has-text('Enviar')",
+)
+
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()
@@ -212,6 +242,8 @@ def _detect_ats(url: str) -> str:
         return "greenhouse"
     if "lever.co" in host or "jobs.lever" in host:
         return "lever"
+    if "linkedin.com" in host:
+        return "linkedin"
     if "getonbrd.com" in host:
         return "getonbrd"
     if any(token in path for token in ("/applications/new", "/apply")):
@@ -943,12 +975,15 @@ async def _apply_greenhouse(
     cv_pdf: Path,
     cover_letter_pdf: Path | None,
     cover_letter_text: str,
+    trace: TraceFn,
 ) -> ResultadoAplicacion:
     result = _new_result(oferta, "greenhouse")
 
     try:
+        trace("Greenhouse: buscando formulario")
         page, form_context = await _open_greenhouse_form(page)
         if form_context is None:
+            trace("Greenhouse: formulario no disponible")
             return _finalize_result(
                 result,
                 page,
@@ -959,9 +994,11 @@ async def _apply_greenhouse(
         if form_context is not page:
             result.detalles["form_iframe"] = "true"
             result.detalles["iframe_url"] = getattr(form_context, "url", "")
+            trace("Greenhouse: formulario dentro de iframe")
 
         for step in range(1, MAX_MULTI_STEP_ATTEMPTS + 1):
             result.detalles["step"] = str(step)
+            trace(f"Greenhouse: rellenando campos (paso {step})")
             await _fill_greenhouse_fields(
                 page,
                 form_context,
@@ -980,6 +1017,7 @@ async def _apply_greenhouse(
             )
             if checked:
                 result.detalles["consents_checked"] = str(checked)
+                trace(f"Greenhouse: consentimientos activados ({checked})")
 
             if await _click_first(
                 page,
@@ -987,6 +1025,7 @@ async def _apply_greenhouse(
                 frame_hints=GREENHOUSE_FRAME_HINTS,
                 preferred_context=form_context,
             ):
+                trace("Greenhouse: submit presionado")
                 page = await _settle_page(page)
                 enviado, mensaje = await _confirm_submission(
                     page,
@@ -998,6 +1037,7 @@ async def _apply_greenhouse(
                     ),
                     frame_hints=GREENHOUSE_FRAME_HINTS,
                 )
+                trace("Greenhouse: confirmacion recibida" if enviado else "Greenhouse: sin confirmacion")
                 return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
 
             if not await _click_first(
@@ -1006,6 +1046,7 @@ async def _apply_greenhouse(
                 frame_hints=GREENHOUSE_FRAME_HINTS,
                 preferred_context=form_context,
             ):
+                trace("Greenhouse: no se encontro boton Next/Continue")
                 return _finalize_result(
                     result,
                     page,
@@ -1013,6 +1054,7 @@ async def _apply_greenhouse(
                     mensaje="Greenhouse no mostró un botón compatible para avanzar o enviar.",
                 )
 
+            trace("Greenhouse: avanzando al siguiente paso")
             page = await _settle_page(page)
             form_context = await _wait_for_form_context(
                 page,
@@ -1030,8 +1072,10 @@ async def _apply_greenhouse(
                     ),
                     frame_hints=GREENHOUSE_FRAME_HINTS,
                 )
+                trace("Greenhouse: confirmacion recibida" if enviado else "Greenhouse: sin confirmacion")
                 return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
 
+        trace("Greenhouse: pasos maximos alcanzados")
         return _finalize_result(
             result,
             page,
@@ -1055,12 +1099,15 @@ async def _apply_lever(
     cv_pdf: Path,
     cover_letter_pdf: Path | None,
     cover_letter_text: str,
+    trace: TraceFn,
 ) -> ResultadoAplicacion:
     result = _new_result(oferta, "lever")
 
     try:
+        trace("Lever: buscando formulario")
         page, form_context = await _open_lever_form(page)
         if form_context is None:
+            trace("Lever: formulario no disponible")
             return _finalize_result(
                 result,
                 page,
@@ -1071,9 +1118,11 @@ async def _apply_lever(
         if form_context is not page:
             result.detalles["form_iframe"] = "true"
             result.detalles["iframe_url"] = getattr(form_context, "url", "")
+            trace("Lever: formulario dentro de iframe")
 
         for step in range(1, MAX_MULTI_STEP_ATTEMPTS + 1):
             result.detalles["step"] = str(step)
+            trace(f"Lever: rellenando campos (paso {step})")
             await _fill_lever_fields(
                 page,
                 form_context,
@@ -1092,6 +1141,7 @@ async def _apply_lever(
             )
             if checked:
                 result.detalles["consents_checked"] = str(checked)
+                trace(f"Lever: consentimientos activados ({checked})")
 
             if await _click_first(
                 page,
@@ -1099,6 +1149,7 @@ async def _apply_lever(
                 frame_hints=LEVER_FRAME_HINTS,
                 preferred_context=form_context,
             ):
+                trace("Lever: submit presionado")
                 page = await _settle_page(page)
                 enviado, mensaje = await _confirm_submission(
                     page,
@@ -1110,6 +1161,7 @@ async def _apply_lever(
                     ),
                     frame_hints=LEVER_FRAME_HINTS,
                 )
+                trace("Lever: confirmacion recibida" if enviado else "Lever: sin confirmacion")
                 return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
 
             if not await _click_first(
@@ -1118,6 +1170,7 @@ async def _apply_lever(
                 frame_hints=LEVER_FRAME_HINTS,
                 preferred_context=form_context,
             ):
+                trace("Lever: no se encontro boton Next/Continue")
                 return _finalize_result(
                     result,
                     page,
@@ -1125,6 +1178,7 @@ async def _apply_lever(
                     mensaje="Lever no mostró un botón compatible para avanzar o enviar.",
                 )
 
+            trace("Lever: avanzando al siguiente paso")
             page = await _settle_page(page)
             form_context = await _wait_for_form_context(
                 page,
@@ -1142,8 +1196,10 @@ async def _apply_lever(
                     ),
                     frame_hints=LEVER_FRAME_HINTS,
                 )
+                trace("Lever: confirmacion recibida" if enviado else "Lever: sin confirmacion")
                 return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
 
+        trace("Lever: pasos maximos alcanzados")
         return _finalize_result(
             result,
             page,
@@ -1167,10 +1223,12 @@ async def _apply_getonbrd(
     cv_pdf: Path,
     cover_letter_pdf: Path | None,
     cover_letter_text: str,
+    trace: TraceFn,
 ) -> ResultadoAplicacion:
     result = _new_result(oferta, "getonbrd")
 
     try:
+        trace("GetOnBrd: buscando formulario")
         form_context = await _wait_for_form_context(
             page,
             GETONBRD_FORM_SELECTORS,
@@ -1179,6 +1237,7 @@ async def _apply_getonbrd(
 
         if form_context is None:
             if not await _click_first(page, GETONBRD_OPEN_SELECTORS):
+                trace("GetOnBrd: no se encontro CTA para postular")
                 return _finalize_result(
                     result,
                     page,
@@ -1194,6 +1253,7 @@ async def _apply_getonbrd(
 
         routed_ats = _detect_ats(page.url)
         if routed_ats == "greenhouse":
+            trace("GetOnBrd: redireccion a Greenhouse")
             return await _apply_greenhouse(
                 page,
                 oferta,
@@ -1201,8 +1261,10 @@ async def _apply_getonbrd(
                 cv_pdf,
                 cover_letter_pdf,
                 cover_letter_text,
+                trace,
             )
         if routed_ats == "lever":
+            trace("GetOnBrd: redireccion a Lever")
             return await _apply_lever(
                 page,
                 oferta,
@@ -1210,6 +1272,7 @@ async def _apply_getonbrd(
                 cv_pdf,
                 cover_letter_pdf,
                 cover_letter_text,
+                trace,
             )
 
         if form_context is None:
@@ -1220,10 +1283,12 @@ async def _apply_getonbrd(
                 cv_pdf,
                 cover_letter_pdf,
                 cover_letter_text,
+                trace,
             )
             fallback_result.detalles["origin"] = "getonbrd"
             return fallback_result
 
+        trace("GetOnBrd: rellenando campos")
         await _fill_getonbrd_fields(
             page,
             form_context,
@@ -1240,6 +1305,7 @@ async def _apply_getonbrd(
             frame_hints=GETONBRD_FRAME_HINTS,
             preferred_context=form_context,
         ):
+            trace("GetOnBrd: no se encontro submit")
             return _finalize_result(
                 result,
                 page,
@@ -1247,6 +1313,7 @@ async def _apply_getonbrd(
                 mensaje="Get on Board no mostró un botón final de envío.",
             )
 
+        trace("GetOnBrd: submit presionado")
         page = await _settle_page(page)
         enviado, mensaje = await _confirm_submission(
             page,
@@ -1259,6 +1326,7 @@ async def _apply_getonbrd(
             ),
             frame_hints=GETONBRD_FRAME_HINTS,
         )
+        trace("GetOnBrd: confirmacion recibida" if enviado else "GetOnBrd: sin confirmacion")
         return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
     except Exception as exc:
         logger.exception("Fallo Get on Board auto-apply para {}: {}", oferta.url, exc)
@@ -1277,6 +1345,7 @@ async def _apply_fallback(
     cv_pdf: Path,
     cover_letter_pdf: Path | None,
     cover_letter_text: str,
+    trace: TraceFn,
 ) -> ResultadoAplicacion:
     result = _new_result(oferta, "fallback")
     result.detalles["fallback"] = "true"
@@ -1284,6 +1353,7 @@ async def _apply_fallback(
     try:
         form_context = await _wait_for_form_context(page, FALLBACK_FORM_SELECTORS)
         if form_context is None:
+            trace("Fallback: no se detecto formulario compatible")
             return _finalize_result(
                 result,
                 page,
@@ -1293,6 +1363,7 @@ async def _apply_fallback(
 
         for step in range(1, 3):
             result.detalles["step"] = str(step)
+            trace(f"Fallback: rellenando campos (paso {step})")
             await _fill_fallback_fields(
                 page,
                 form_context,
@@ -1304,6 +1375,7 @@ async def _apply_fallback(
             )
 
             if await _click_first(page, FALLBACK_SUBMIT_SELECTORS, preferred_context=form_context):
+                trace("Fallback: submit presionado")
                 page = await _settle_page(page)
                 enviado, mensaje = await _confirm_submission(
                     page,
@@ -1314,9 +1386,11 @@ async def _apply_fallback(
                         "postulación enviada",
                     ),
                 )
+                trace("Fallback: confirmacion recibida" if enviado else "Fallback: sin confirmacion")
                 return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
 
             if not await _click_first(page, FALLBACK_NEXT_SELECTORS, preferred_context=form_context):
+                trace("Fallback: no se encontro Next/Continue")
                 return _finalize_result(
                     result,
                     page,
@@ -1324,6 +1398,7 @@ async def _apply_fallback(
                     mensaje="El fallback no encontró un botón seguro para continuar o enviar.",
                 )
 
+            trace("Fallback: avanzando al siguiente paso")
             page = await _settle_page(page)
             form_context = await _wait_for_form_context(page, FALLBACK_FORM_SELECTORS)
             if form_context is None:
@@ -1336,8 +1411,10 @@ async def _apply_fallback(
                         "postulación enviada",
                     ),
                 )
+                trace("Fallback: confirmacion recibida" if enviado else "Fallback: sin confirmacion")
                 return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
 
+        trace("Fallback: pasos maximos alcanzados")
         return _finalize_result(
             result,
             page,
@@ -1354,6 +1431,106 @@ async def _apply_fallback(
         )
 
 
+async def _apply_linkedin(
+    page: Page,
+    oferta: OfertaTrabajo,
+    perfil: PerfilMaestro,
+    cv_pdf: Path,
+    cover_letter_pdf: Path | None,
+    cover_letter_text: str,
+    trace: TraceFn,
+) -> ResultadoAplicacion:
+    result = _new_result(oferta, "linkedin")
+
+    try:
+        trace("LinkedIn: buscando boton Easy Apply")
+        if not await _click_first(page, LINKEDIN_EASY_APPLY_SELECTORS):
+            return _finalize_result(
+                result,
+                page,
+                enviado=False,
+                mensaje="LinkedIn no mostró Easy Apply. Postulación manual requerida.",
+            )
+
+        page = await _settle_page(page)
+        form_context = await _wait_for_form_context(page, LINKEDIN_FORM_SELECTORS)
+        if form_context is None:
+            return _finalize_result(
+                result,
+                page,
+                enviado=False,
+                mensaje="LinkedIn no expuso el formulario de Easy Apply.",
+            )
+
+        first_name, last_name = _split_name(perfil.nombre)
+        field_map = (
+            ("first_name", ("input[name*='first']",), first_name),
+            ("last_name", ("input[name*='last']",), last_name),
+            ("email", ("input[type='email']", "input[name*='email']"), perfil.email),
+            ("phone", ("input[type='tel']", "input[name*='phone']"), perfil.telefono),
+            ("cover_letter_text", ("textarea",), cover_letter_text),
+        )
+
+        for step in range(1, MAX_MULTI_STEP_ATTEMPTS + 1):
+            trace(f"LinkedIn: rellenando campos (paso {step})")
+            for detail_key, selectors, value in field_map:
+                if await _fill_first(page, selectors, value, preferred_context=form_context):
+                    result.detalles[detail_key] = "filled"
+
+            if await _upload_file(
+                page,
+                ("input[type='file']", "input[name*='resume']", "input[name*='cv']"),
+                cv_pdf,
+                preferred_context=form_context,
+            ):
+                result.detalles["resume"] = "uploaded"
+
+            if await _click_first(page, LINKEDIN_SUBMIT_SELECTORS, preferred_context=form_context):
+                trace("LinkedIn: submit presionado")
+                page = await _settle_page(page)
+                enviado, mensaje = await _confirm_submission(
+                    page,
+                    form_selectors=LINKEDIN_FORM_SELECTORS,
+                    success_tokens=("application submitted", "applied", "submitted", "thanks"),
+                )
+                trace("LinkedIn: confirmacion recibida" if enviado else "LinkedIn: sin confirmacion")
+                return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
+
+            if not await _click_first(page, LINKEDIN_NEXT_SELECTORS, preferred_context=form_context):
+                return _finalize_result(
+                    result,
+                    page,
+                    enviado=False,
+                    mensaje="LinkedIn no mostró botones Next/Review/Submit.",
+                )
+
+            trace("LinkedIn: avanzando al siguiente paso")
+            page = await _settle_page(page)
+            form_context = await _wait_for_form_context(page, LINKEDIN_FORM_SELECTORS)
+            if form_context is None:
+                enviado, mensaje = await _confirm_submission(
+                    page,
+                    form_selectors=LINKEDIN_FORM_SELECTORS,
+                    success_tokens=("application submitted", "applied", "submitted", "thanks"),
+                )
+                return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
+
+        return _finalize_result(
+            result,
+            page,
+            enviado=False,
+            mensaje="LinkedIn requiere más pasos de los soportados por el agente.",
+        )
+    except Exception as exc:
+        logger.exception("Fallo LinkedIn auto-apply para {}: {}", oferta.url, exc)
+        return _finalize_result(
+            result,
+            page,
+            enviado=False,
+            mensaje=f"Fallo el flujo LinkedIn: {exc}",
+        )
+
+
 async def _route_apply(
     page: Page,
     ats: str,
@@ -1362,6 +1539,7 @@ async def _route_apply(
     cv_pdf: Path,
     cover_letter_pdf: Path | None,
     cover_letter_text: str,
+    trace: TraceFn,
 ) -> ResultadoAplicacion:
     if ats == "greenhouse":
         return await _apply_greenhouse(
@@ -1371,6 +1549,7 @@ async def _route_apply(
             cv_pdf,
             cover_letter_pdf,
             cover_letter_text,
+            trace,
         )
     if ats == "lever":
         return await _apply_lever(
@@ -1380,6 +1559,17 @@ async def _route_apply(
             cv_pdf,
             cover_letter_pdf,
             cover_letter_text,
+            trace,
+        )
+    if ats == "linkedin":
+        return await _apply_linkedin(
+            page,
+            oferta,
+            perfil,
+            cv_pdf,
+            cover_letter_pdf,
+            cover_letter_text,
+            trace,
         )
     if ats == "getonbrd":
         return _finalize_result(
@@ -1408,6 +1598,13 @@ async def auto_apply_to_job(
     """Auto-apply dirigido por ATS con Playwright async."""
     ats = _detect_ats(oferta.url)
     result = _new_result(oferta, ats)
+    trace_seq = 0
+
+    def _trace(message: str) -> None:
+        nonlocal trace_seq
+        trace_seq += 1
+        result.detalles[f"trace_{trace_seq:02d}"] = message
+        print(f"[auto-apply] {message}")
 
     if not oferta.url:
         return _finalize_result(
@@ -1439,17 +1636,57 @@ async def auto_apply_to_job(
         )
 
     cover_letter_text = _markdown_to_text(cover_letter_md)
+    _trace(f"ATS detectado: {ats}")
 
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=False, slow_mo=50)
+            executable_path = Path(playwright.chromium.executable_path)
+            if not executable_path.exists():
+                return _finalize_result(
+                    result,
+                    None,
+                    enviado=False,
+                    mensaje="Playwright no tiene navegador instalado. Ejecuta: playwright install chromium",
+                )
             try:
+                _trace("Lanzando navegador Playwright")
+                browser = await playwright.chromium.launch(headless=False, slow_mo=50)
+            except PermissionError:
+                return _finalize_result(
+                    result,
+                    None,
+                    enviado=False,
+                    mensaje=(
+                        "Playwright no pudo lanzar el navegador por permisos. "
+                        "Reabre la terminal como Administrador o ajusta el antivirus."
+                    ),
+                )
+            except PlaywrightError as exc:
+                if "executable doesn't exist" in str(exc).lower():
+                    return _finalize_result(
+                        result,
+                        None,
+                        enviado=False,
+                        mensaje="Playwright no tiene navegador instalado. Ejecuta: playwright install chromium",
+                    )
+                return _finalize_result(
+                    result,
+                    None,
+                    enviado=False,
+                    mensaje=f"Fallo Playwright al lanzar el navegador: {exc}",
+                )
+            try:
+                profile_id = get_active_profile_id()
+                paths = ensure_profile_dirs(profile_id)
+                storage_state_path = paths.profile_dir / "playwright_storage.json"
                 context = await browser.new_context(
                     user_agent=REALISTIC_USER_AGENT,
                     viewport={"width": 1440, "height": 1600},
+                    storage_state=str(storage_state_path) if storage_state_path.exists() else None,
                 )
                 page = await context.new_page()
                 try:
+                    _trace("Abriendo URL de oferta")
                     await page.goto(
                         oferta.url,
                         wait_until="domcontentloaded",
@@ -1463,8 +1700,9 @@ async def auto_apply_to_job(
                         mensaje="La página del ATS no cargó a tiempo.",
                     )
 
+                _trace("URL cargada, iniciando flujo ATS")
                 page = await _settle_page(page)
-                return await _route_apply(
+                resultado = await _route_apply(
                     page,
                     ats,
                     oferta,
@@ -1472,7 +1710,14 @@ async def auto_apply_to_job(
                     cv_pdf,
                     cover_letter_pdf,
                     cover_letter_text,
+                    _trace,
                 )
+                try:
+                    await context.storage_state(path=str(storage_state_path))
+                    _trace("Sesion persistida en storage_state")
+                except Exception:
+                    pass
+                return resultado
             finally:
                 await browser.close()
     except Exception as exc:

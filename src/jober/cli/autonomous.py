@@ -13,7 +13,7 @@ from jober.agents.auto_apply import auto_apply_to_job
 from jober.agents.autonomous_search import find_new_leads, lead_to_oferta
 from jober.agents.offer_evaluator import evaluate_offer, evaluate_offer_for_scout
 from jober.agents.orchestrator import build_apply_graph
-from jober.core.config import resolve_profile_id
+from jober.core.config import ensure_profile_dirs, resolve_profile_id
 from jober.core.models import RegistroPostulacion, EstadoPostulacion, JobLead
 from jober.core.state import new_state, view_state
 from jober.utils.file_io import (
@@ -90,6 +90,12 @@ async def autonomous_run_loop(
         return
 
     prefs = perfil.preferencias
+    if "linkedin" in prefs.plataformas_activas:
+        storage_state_path = ensure_profile_dirs(profile_id).profile_dir / "playwright_storage.json"
+        if not storage_state_path.exists():
+            console.print(
+                "[yellow]LinkedIn requiere sesion activa. Ejecuta: jober login linkedin[/yellow]"
+            )
     apply_graph = build_apply_graph()
     meetfrank_engine = os.getenv("JOBER_MEETFRANK_ENGINE", "").strip().lower()
     if meetfrank_engine == "playwright" and "meetfrank" in prefs.plataformas_activas:

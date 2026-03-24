@@ -41,6 +41,7 @@ playwright install chromium
 ```bash
 jober init --profile ai
 jober preset-ai --profile ai
+jober login linkedin --profile ai
 jober scout --limit 5 --per-platform 3 --profile ai
 jober apply-scout --top 1 --profile ai
 jober run --profile ai
@@ -53,6 +54,7 @@ jober run --profile ai
 ```bash
 jober init --profile ai
 jober preset-ai --profile ai
+jober login linkedin --profile ai
 jober scout --limit 5 --per-platform 3 --profile ai
 jober apply-scout --top 1 --profile ai
 jober run --profile ai
