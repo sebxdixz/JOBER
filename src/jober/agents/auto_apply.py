@@ -155,6 +155,15 @@ LINKEDIN_EASY_APPLY_SELECTORS = (
     "button:has-text('Easy Apply')",
     "button:has-text('Solicitud sencilla')",
     "button:has-text('Solicitud fácil')",
+    "button:has-text('Solicitar')",  # Español estándar
+    "button:has-text('Apply')",  # Inglés simple
+    "button:has-text('Postular')",  # Latinoamérica
+    "button:has-text('Postularme')",
+    "button.jobs-apply-button",  # Clase específica de LinkedIn
+    "button[data-job-id]",  # Botón con job ID
+    "button[aria-label*='Apply']",  # ARIA label
+    "button[aria-label*='Solicitar']",
+    "button[aria-label*='Postular']",
 )
 LINKEDIN_NEXT_SELECTORS = (
     "button:has-text('Next')",
