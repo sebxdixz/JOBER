@@ -10,56 +10,18 @@ import re
 from datetime import date
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from jober.core.config import get_llm
-from jober.core.state import JoberState
-from jober.utils.llm_helpers import strip_markdown_fences
-
-
-COVER_LETTER_PROMPT = """Eres un escritor senior de cover letters para roles técnicos.
-Recibirás:
-1. El perfil maestro del candidato (JSON)
-2. La oferta de trabajo
-3. El CV adaptado ya generado
-
-Genera una cover letter profesional en Markdown, lista para enviar, con esta lógica:
-- encabezado breve con nombre, email, teléfono y enlaces relevantes si existen
-- fecha real
-- nombre exacto de la empresa
-- asunto o referencia al cargo exacto
-- 3 párrafos compactos, no 4-5 bloques largos
-- cierre serio y limpio
-
-Reglas:
-- Debe usar el nombre EXACTO de la empresa y el cargo EXACTO de la oferta
-- Debe escribirse en el idioma indicado por `IDIOMA_DOCUMENTO`
-- NO uses placeholders como [Fecha], [Empresa], [Nombre]
-- No inventes experiencias
-- Si no cumple 100%, enfatiza lo transferible y capacidad de aprendizaje
-- Tono: seguro, técnico, sobrio, nada de frases vacías
-- Longitud objetivo: 220-320 palabras
-- Tiene que sonar como una carta real enviada por un candidato fuerte
-
-Responde SOLO con la carta en Markdown."""
-
-
-MATCH_ANALYSIS_PROMPT = """Eres un analista de fit laboral.
-Recibirás:
-1. El perfil maestro del candidato
-2. La oferta de trabajo
-3. El CV adaptado
-
-Analiza el match entre candidato y oferta:
-1. match_score: número entre 0.0 y 1.0
-2. analisis_fit: texto breve (3-5 oraciones) explicando fortalezas y gaps
-
-Responde en JSON exacto:
-{"match_score": 0.85, "analisis_fit": "..."}"""
+from jober.core.logging import logger
+from jober.core.prompts import get_prompt
+from jober.core.state import JoberState, view_state
+from jober.utils.language_detection import detect_offer_document_language
+from jober.utils.llm_helpers import ainvoke_with_retry, strip_markdown_fences
 
 
 async def cv_writer_node(state: JoberState) -> dict:
-    """Generate cover letter and match analysis after the CV agent."""
+    """Generate cover letter and fit analysis after the CV agent."""
+    state = view_state(state)
     llm = get_llm()
     docs = state.documentos.model_copy(deep=True)
 
@@ -76,15 +38,39 @@ async def cv_writer_node(state: JoberState) -> dict:
         f"CV_ADAPTADO_LATEX:\n{docs.cv_adaptado_tex}"
     )
 
-    cl_resp = await _call_with_retry(llm, COVER_LETTER_PROMPT, context)
-    match_resp = await _call_with_retry(llm, MATCH_ANALYSIS_PROMPT, context)
+    try:
+        cl_resp = await _call_with_retry(
+            llm,
+            get_prompt("cv_writer_cover_letter"),
+            context,
+            "cover letter",
+        )
+        match_resp = await _call_with_retry(
+            llm,
+            get_prompt("cv_writer_match_analysis"),
+            context,
+            "match analysis",
+        )
+    except Exception as exc:
+        logger.exception(
+            "Document generation failed for {} at {}",
+            state.oferta.empresa or "(sin empresa)",
+            state.oferta.url or "(sin url)",
+        )
+        return {"error": f"Error generando documentos con LLM: {exc}"}
+
     docs.cover_letter_md = _sanitize_cover_letter(cl_resp, state, today)
 
     try:
         match_data = json.loads(strip_markdown_fences(match_resp))
         docs.match_score = float(match_data.get("match_score", 0))
         docs.analisis_fit = match_data.get("analisis_fit", "")
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Could not parse match analysis JSON for {}: {}",
+            state.oferta.url or "(sin url)",
+            exc,
+        )
         docs.analisis_fit = match_resp
 
     return {
@@ -94,26 +80,21 @@ async def cv_writer_node(state: JoberState) -> dict:
     }
 
 
-async def _call_with_retry(llm: ChatOpenAI, system_prompt: str, context: str, max_retries: int = 3) -> str:
-    import asyncio
-
-    for attempt in range(max_retries):
-        try:
-            resp = await llm.ainvoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=context),
-            ])
-            return resp.content
-        except Exception as exc:
-            if "429" in str(exc) or "rate" in str(exc).lower():
-                await asyncio.sleep(5 * (attempt + 1))
-                continue
-            raise
-    raise RuntimeError("Max retries exceeded for cover letter / fit analysis")
+async def _call_with_retry(llm, system_prompt: str, context: str, operation: str) -> str:
+    response = await ainvoke_with_retry(
+        llm,
+        [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=context),
+        ],
+        operation=operation,
+    )
+    return str(response.content)
 
 
 def _sanitize_cover_letter(text: str, state: JoberState, today: str) -> str:
-    """Corrige placeholders obvios y fuerza datos reales críticos."""
+    """Fix obvious placeholders and enforce critical real data."""
+    state = view_state(state)
     perfil = state.perfil
     oferta = state.oferta
     cleaned = text.strip()
@@ -129,8 +110,8 @@ def _sanitize_cover_letter(text: str, state: JoberState, today: str) -> str:
     for old, new in replacements.items():
         cleaned = cleaned.replace(old, new)
 
-    cleaned = re.sub(r"^\s*#\s+Carta de Presentación\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"^\s*\*\*Carta de Presentación\*\*\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*#\s+Carta de Presentacion\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*\*\*Carta de Presentacion\*\*\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*\[[^\]]+\]\s*$", "", cleaned, flags=re.MULTILINE)
     cleaned = cleaned.lstrip()
 
@@ -157,16 +138,5 @@ def _sanitize_cover_letter(text: str, state: JoberState, today: str) -> str:
 
 
 def _detect_offer_language(state: JoberState) -> str:
-    text = " ".join(
-        [
-            state.oferta.titulo or "",
-            state.oferta.descripcion or "",
-            " ".join(state.oferta.requisitos or []),
-        ]
-    ).lower()
-    english_markers = [
-        "engineer", "machine learning", "remote", "team", "experience", "years",
-        "python", "build", "models", "production", "framework", "hiring",
-    ]
-    score = sum(1 for marker in english_markers if marker in text)
-    return "English" if score >= 3 else "Español"
+    state = view_state(state)
+    return detect_offer_document_language(state.oferta)

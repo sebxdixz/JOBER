@@ -11,9 +11,9 @@ import json
 import os
 import re
 from urllib.parse import quote_plus, urljoin
-from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
+import httpx
 
 from jober.core.models import JobLead, OfertaTrabajo, PerfilMaestro
 from jober.utils.web_search import get_search_config, search_web
@@ -32,11 +32,19 @@ PLATFORM_ORDER = ["linkedin", "getonbrd", "meetfrank"]
 LEAD_PLATFORM_ORDER = ["linkedin", "getonbrd", "meetfrank", "rss"]
 
 
-def _fetch_html(url: str, timeout: int = 20) -> str:
-    request = Request(url, headers=DEFAULT_HEADERS)
-    with urlopen(request, timeout=timeout) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+async def _fetch_html(url: str, timeout: int = 20, client: httpx.AsyncClient | None = None) -> str:
+    if client is not None:
+        response = await client.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.text
+
+    async with httpx.AsyncClient(
+        headers=DEFAULT_HEADERS,
+        follow_redirects=True,
+    ) as async_client:
+        response = await async_client.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.text
 
 
 def _fetch_html_playwright_sync(url: str, timeout: int = 30000) -> str:
@@ -54,7 +62,7 @@ def _fetch_html_playwright_sync(url: str, timeout: int = 30000) -> str:
 async def _fetch_html_with_engine(url: str, engine: str, timeout: int = 20) -> str:
     if engine == "playwright":
         return await asyncio.to_thread(_fetch_html_playwright_sync, url, timeout * 1000)
-    return await asyncio.to_thread(_fetch_html, url, timeout)
+    return await _fetch_html(url, timeout)
 
 
 def _canonical_job_key(url: str) -> str:
@@ -276,7 +284,7 @@ async def search_rss_leads(feed_urls: list[str], max_results: int = 20) -> list[
 
     for feed_url in feed_urls:
         try:
-            xml = await asyncio.to_thread(_fetch_html, feed_url)
+            xml = await _fetch_html(feed_url)
         except Exception:
             continue
 
@@ -335,7 +343,7 @@ async def _search_getonbrd_query(query: str, max_results: int) -> list[str]:
     search_query = quote_plus(query)
     url = f"https://www.getonbrd.com/empleos?query={search_query}"
     try:
-        html = await asyncio.to_thread(_fetch_html, url)
+        html = await _fetch_html(url)
     except Exception:
         return []
 
@@ -377,7 +385,7 @@ async def search_getonbrd_leads(keywords: list[str], max_results: int = 20) -> l
     async def _fetch_query(query: str) -> list[JobLead]:
         url = f"https://www.getonbrd.com/api/v0/search/jobs?query={quote_plus(query)}"
         try:
-            html = await asyncio.to_thread(_fetch_html, url)
+            html = await _fetch_html(url)
             payload = json.loads(html)
         except Exception:
             return []
@@ -439,7 +447,7 @@ async def search_linkedin(keywords: list[str], max_results: int = 20) -> list[st
     )
 
     try:
-        html = await asyncio.to_thread(_fetch_html, url)
+        html = await _fetch_html(url)
     except Exception:
         return []
 
@@ -540,7 +548,7 @@ async def search_linkedin_leads(
         keyword, location, start, remote_flag = spec
         url = _build_linkedin_query(keyword, location, start, remote_flag, tpr)
         try:
-            html = await asyncio.to_thread(_fetch_html, url)
+            html = await _fetch_html(url)
         except Exception:
             return []
         return _parse_linkedin_leads(html, max_results)

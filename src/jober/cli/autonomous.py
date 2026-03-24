@@ -15,7 +15,7 @@ from jober.agents.offer_evaluator import evaluate_offer, evaluate_offer_for_scou
 from jober.agents.orchestrator import build_apply_graph
 from jober.core.config import resolve_profile_id
 from jober.core.models import RegistroPostulacion, EstadoPostulacion, JobLead
-from jober.core.state import JoberState
+from jober.core.state import new_state, view_state
 from jober.utils.file_io import (
     ensure_job_output_dir,
     load_last_scout,
@@ -267,11 +267,9 @@ async def autonomous_run_loop(
                 })
 
                 try:
-                    state = JoberState(job_url=url, perfil=perfil)
+                    state = new_state(job_url=url, perfil=perfil)
                     result = await apply_graph.ainvoke(state)
-
-                    if isinstance(result, dict):
-                        result = JoberState(**{k: v for k, v in result.items() if k in JoberState.model_fields})
+                    result = view_state(result)
 
                     if result.error:
                         console.print(f"[red]  ✗ Error en pipeline: {result.error[:100]}[/red]")

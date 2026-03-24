@@ -1,30 +1,28 @@
-"""Orquestador multiagente LangGraph — define los grafos para init y apply."""
+"""LangGraph orchestrator: builds the init and apply graphs."""
 
 from __future__ import annotations
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
-from jober.core.state import JoberState
-from jober.agents.cv_reader import cv_reader_node
 from jober.agents.cv_latex_writer import cv_latex_writer_node
+from jober.agents.cv_reader import cv_reader_node
 from jober.agents.cv_writer import cv_writer_node
 from jober.agents.job_scraper import job_scraper_node
 from jober.agents.offer_evaluator import offer_evaluator_node
-from jober.agents.onboarding import onboarding_interview_node, merge_profile_node
+from jober.agents.onboarding import merge_profile_node, onboarding_interview_node
+from jober.core.state import JoberState, view_state
 
-
-# ── Grafo: jober init ──────────────────────────────────────────────────────
-# Flujo: read_cvs → onboarding_interview → (loop con usuario) → merge_profile
 
 def _should_continue_onboarding(state: JoberState) -> str:
-    """Router: si el onboarding terminó, merge; si no, esperar input."""
+    """Route onboarding to merge or pause for user input."""
+    state = view_state(state)
     if state.next_step == "merge_profile":
         return "merge_profile"
-    return END  # Pausar para input del usuario
+    return END
 
 
 def build_init_graph() -> StateGraph:
-    """Construye el grafo para el comando `jober init`."""
+    """Build the graph for `jober init`."""
     graph = StateGraph(JoberState)
 
     graph.add_node("cv_reader", cv_reader_node)
@@ -46,18 +44,17 @@ def build_init_graph() -> StateGraph:
     return graph.compile()
 
 
-# ── Grafo: jober apply ─────────────────────────────────────────────────────
-# Flujo: scrape_job → cv_writer → END
-
 def _should_continue_apply(state: JoberState) -> str:
-    """Router post-scraping."""
+    """Route after scraping."""
+    state = view_state(state)
     if state.error:
         return END
     return "offer_evaluator"
 
 
 def _should_continue_after_evaluation(state: JoberState) -> str:
-    """Router post-evaluacion."""
+    """Route after local evaluation."""
+    state = view_state(state)
     if state.error:
         return END
     if not state.should_apply:
@@ -66,7 +63,7 @@ def _should_continue_after_evaluation(state: JoberState) -> str:
 
 
 def build_apply_graph() -> StateGraph:
-    """Construye el grafo para el comando `jober apply`."""
+    """Build the graph for `jober apply`."""
     graph = StateGraph(JoberState)
 
     graph.add_node("job_scraper", job_scraper_node)

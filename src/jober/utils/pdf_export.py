@@ -17,6 +17,8 @@ from pathlib import Path
 import markdown
 from bs4 import BeautifulSoup
 
+from jober.core.logging import logger
+
 
 CV_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="es">
@@ -241,28 +243,52 @@ def export_latex_to_pdf_sync(tex_text: str, output_path: Path) -> Path | None:
     engine = shutil.which("pdflatex") or shutil.which("xelatex")
     if not engine or not tex_text.strip():
         return None
+    timeout_seconds = int(os.getenv("JOBER_LATEX_TIMEOUT_SECONDS", "15"))
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         tex_file = tmp_path / "document.tex"
         tex_file.write_text(tex_text, encoding="utf-8")
 
-        result = subprocess.run(
-            [
-                engine,
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                str(tex_file.name),
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    engine,
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    str(tex_file.name),
+                ],
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "LaTeX compilation timed out after {}s using {} for {}",
+                timeout_seconds,
+                Path(engine).name,
+                output_path.name,
+            )
+            return None
+        except OSError:
+            logger.exception("Failed to start LaTeX engine {}", engine)
+            return None
         if result.returncode != 0:
+            logger.error(
+                "LaTeX compilation failed with {} for {}: {}",
+                Path(engine).name,
+                output_path.name,
+                (result.stderr or result.stdout or "unknown error")[:500],
+            )
             return None
 
         compiled_pdf = tmp_path / "document.pdf"
         if not compiled_pdf.exists():
+            logger.error(
+                "LaTeX compilation reported success but no PDF was produced for {}",
+                output_path.name,
+            )
             return None
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

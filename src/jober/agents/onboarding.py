@@ -1,50 +1,37 @@
-"""Agente de onboarding — entrevista interactiva para completar el perfil maestro."""
+"""Interactive onboarding agent for completing the master profile."""
 
 from __future__ import annotations
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from jober.core.config import get_llm
+from jober.core.logging import logger
 from jober.core.models import PerfilMaestro
-from jober.core.state import JoberState
-from jober.utils.llm_helpers import strip_markdown_fences
-
-
-ONBOARDING_PROMPT = """Eres un entrevistador profesional de recursos humanos.
-Tu objetivo es completar el perfil profesional del usuario haciendo preguntas específicas.
-
-Ya tienes información extraída de su CV (se te proporcionará como JSON).
-Tu trabajo es:
-1. Identificar qué información falta o es débil
-2. Hacer UNA pregunta a la vez, concreta y directa
-3. Cubrir: habilidades no mencionadas, logros cuantificables, motivaciones, preferencias laborales
-4. Cuando sientas que tienes suficiente información, responde exactamente: [ONBOARDING_COMPLETO]
-
-Sé amigable pero profesional. Habla en español.
-No hagas más de 8-10 preguntas en total."""
-
-
-MERGE_PROMPT = """Recibirás:
-1. Un perfil maestro existente (JSON)
-2. La transcripción de una entrevista con información adicional
-
-Actualiza el perfil maestro incorporando la nueva información.
-Mantén toda la info existente y enriquécela con los nuevos datos.
-Responde SOLO con el JSON actualizado del PerfilMaestro."""
+from jober.core.prompts import get_prompt
+from jober.core.state import JoberState, view_state
+from jober.utils.llm_helpers import ainvoke_with_retry, strip_markdown_fences
 
 
 async def onboarding_interview_node(state: JoberState) -> dict:
-    """Nodo LangGraph: genera la siguiente pregunta de onboarding."""
+    """Generate the next onboarding question."""
+    state = view_state(state)
     llm = get_llm(temperature=0.5)
 
-    system = SystemMessage(content=ONBOARDING_PROMPT)
+    system = SystemMessage(content=get_prompt("onboarding_interview"))
     perfil_context = HumanMessage(
-        content=f"Perfil extraído del CV:\n{state.perfil.model_dump_json(indent=2)}"
+        content=f"Perfil extraido del CV:\n{state.perfil.model_dump_json(indent=2)}"
     )
-
     messages = [system, perfil_context] + state.messages
 
-    response = await llm.ainvoke(messages)
+    try:
+        response = await ainvoke_with_retry(
+            llm,
+            messages,
+            operation="profile onboarding interview",
+        )
+    except Exception as exc:
+        logger.exception("Profile onboarding question generation failed")
+        return {"error": f"No se pudo continuar el onboarding: {exc}"}
 
     if "[ONBOARDING_COMPLETO]" in response.content:
         return {
@@ -60,28 +47,38 @@ async def onboarding_interview_node(state: JoberState) -> dict:
 
 
 async def merge_profile_node(state: JoberState) -> dict:
-    """Nodo LangGraph: fusiona respuestas del onboarding con el perfil extraído."""
+    """Merge onboarding answers into the extracted profile."""
+    state = view_state(state)
     llm = get_llm(temperature=0.1)
 
     conversation = "\n".join(
-        f"{'AI' if isinstance(m, AIMessage) else 'User'}: {m.content}"
-        for m in state.messages
+        f"{'AI' if isinstance(message, AIMessage) else 'User'}: {message.content}"
+        for message in state.messages
     )
 
-    response = await llm.ainvoke([
-        SystemMessage(content=MERGE_PROMPT),
-        HumanMessage(
-            content=(
-                f"PERFIL ACTUAL:\n{state.perfil.model_dump_json(indent=2)}\n\n"
-                f"ENTREVISTA:\n{conversation}"
-            )
-        ),
-    ])
+    try:
+        response = await ainvoke_with_retry(
+            llm,
+            [
+                SystemMessage(content=get_prompt("onboarding_merge_profile")),
+                HumanMessage(
+                    content=(
+                        f"PERFIL ACTUAL:\n{state.perfil.model_dump_json(indent=2)}\n\n"
+                        f"ENTREVISTA:\n{conversation}"
+                    )
+                ),
+            ],
+            operation="merge onboarding profile",
+        )
+    except Exception as exc:
+        logger.exception("Profile merge after onboarding failed")
+        return {"error": f"No se pudo fusionar el perfil: {exc}"}
 
     try:
         clean_json = strip_markdown_fences(response.content)
         perfil = PerfilMaestro.model_validate_json(clean_json)
     except Exception:
+        logger.exception("Could not parse merged profile payload")
         return {"error": "No se pudo parsear el perfil actualizado."}
 
     return {

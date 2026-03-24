@@ -46,7 +46,7 @@ from jober.core.config import (
     load_settings,
 )
 from jober.core.models import RegistroPostulacion, EstadoPostulacion
-from jober.core.state import JoberState
+from jober.core.state import JoberState, new_state, view_state
 from jober.agents.cv_reader import extract_text_from_cvs
 from jober.agents.auto_apply import auto_apply_to_job
 from jober.agents.autonomous_search import find_new_leads_by_platform, lead_to_oferta
@@ -192,7 +192,7 @@ def _build_ai_remote_preferences(existing: PreferenciasLaborales | None = None) 
     return prefs
 
 
-async def _run_init_flow(graph, state: JoberState) -> JoberState:
+async def _run_init_flow(graph, state: JoberState):
     """Ejecuta el flujo de init con loop interactivo de onboarding."""
     result = await graph.ainvoke(state)
 
@@ -209,10 +209,7 @@ async def _run_init_flow(graph, state: JoberState) -> JoberState:
         result["messages"] = result.get("messages", []) + [HumanMessage(content=user_input)]
         result = await graph.ainvoke(result)
 
-    if isinstance(result, dict):
-        return JoberState(**{k: v for k, v in result.items() if k in JoberState.model_fields})
-
-    return result
+    return view_state(result)
 
 
 @app.command()
@@ -281,7 +278,7 @@ def init(
         raise typer.Exit(1)
 
     init_graph = build_init_graph()
-    state = JoberState(cv_raw_text=cv_text)
+    state = new_state(cv_raw_text=cv_text)
 
     result = asyncio.run(_run_init_flow(init_graph, state))
 
@@ -343,12 +340,9 @@ def apply(
     ))
 
     apply_graph = build_apply_graph()
-    state = JoberState(job_url=url, perfil=perfil)
+    state = new_state(job_url=url, perfil=perfil)
 
     result = asyncio.run(_run_apply_flow(apply_graph, state))
-
-    if isinstance(result, dict):
-        result = JoberState(**{k: v for k, v in result.items() if k in JoberState.model_fields})
 
     output_dir = ensure_job_output_dir(
         profile_id,
@@ -434,9 +428,9 @@ def apply(
     ))
 
 
-async def _run_apply_flow(graph, state: JoberState) -> JoberState:
+async def _run_apply_flow(graph, state: JoberState):
     """Ejecuta el flujo de apply."""
-    return await graph.ainvoke(state)
+    return view_state(await graph.ainvoke(state))
 
 
 @app.command()
@@ -650,7 +644,7 @@ def scout(
             console.print("[yellow]No se encontraron ofertas nuevas.[/yellow]")
             raise typer.Exit(0)
 
-        ranked: list[tuple[object, float, JoberState]] = []
+        ranked = []
         filtered_reasons: dict[str, int] = {}
         console.print(f"[cyan]Evaluando {len(leads)} ofertas...[/cyan]")
         for lead in leads:
@@ -671,13 +665,13 @@ def scout(
             ranked.append((
                 lead,
                 quick_score,
-                JoberState(
+                view_state(new_state(
                     job_url=lead.url,
                     perfil=perfil,
                     oferta=oferta,
                     should_apply=True,
                     screening_notes=notes,
-                ),
+                )),
             ))
 
         ranked.sort(key=lambda item: item[1], reverse=True)

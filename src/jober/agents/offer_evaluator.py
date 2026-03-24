@@ -1,6 +1,6 @@
-"""Agente de evaluacion inicial de ofertas.
+"""Initial offer evaluation agent.
 
-Hace un filtro barato y explicable antes de gastar LLM en CV/cover letter.
+Runs a cheap and explainable filter before spending LLM tokens.
 """
 
 from __future__ import annotations
@@ -8,11 +8,20 @@ from __future__ import annotations
 import re
 
 from jober.core.models import OfertaTrabajo, PerfilMaestro
-from jober.core.state import JoberState
+from jober.core.state import JoberState, view_state
 
 
 def _normalize_many(values: list[str]) -> list[str]:
     return [value.strip().lower() for value in values if value and value.strip()]
+
+
+def _contains_exact_term(text: str, term: str) -> bool:
+    blob = (text or "").lower()
+    target = (term or "").strip().lower()
+    if not blob.strip() or not target:
+        return False
+    pattern = rf"(?<!\w){re.escape(target)}(?!\w)"
+    return re.search(pattern, blob, flags=re.IGNORECASE) is not None
 
 
 def _ai_intent(prefs_roles: list[str]) -> bool:
@@ -43,7 +52,6 @@ def _has_ai_keywords(text: str) -> bool:
     if any(phrase in blob for phrase in keyword_phrases):
         return True
 
-    # Short tokens with word boundaries
     if re.search(r"\bai\b", blob) or re.search(r"\bml\b", blob):
         return True
 
@@ -152,8 +160,7 @@ def _build_role_keywords(roles: list[str]) -> list[str]:
 
 
 def _has_any_keyword(text: str, keywords: list[str]) -> bool:
-    blob = (text or "").lower()
-    return any(keyword in blob for keyword in keywords if keyword)
+    return any(_contains_exact_term(text, keyword) for keyword in keywords if keyword)
 
 
 def _has_obviously_bad_title(title: str) -> bool:
@@ -230,7 +237,7 @@ def _seniority_is_too_high(user_level: int, offer_level: int) -> bool:
 
 
 def evaluate_offer_for_scout(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, list[str], float]:
-    """Filtro amplio para scouting: prioriza cobertura, solo con minimos duros."""
+    """Wide scouting filter: maximize coverage while enforcing hard constraints."""
     prefs = perfil.preferencias
     notes: list[str] = []
     score = 0.0
@@ -290,7 +297,8 @@ def evaluate_offer_for_scout(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tu
 
 
 async def offer_evaluator_node(state: JoberState) -> dict:
-    """Evalua si vale la pena continuar con la oferta."""
+    """Evaluate whether the offer should continue through the pipeline."""
+    state = view_state(state)
     should_apply, notes, quick_score = evaluate_offer(state.oferta, state.perfil)
 
     return {
@@ -306,7 +314,7 @@ async def offer_evaluator_node(state: JoberState) -> dict:
 
 
 def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, list[str], float]:
-    """Evalua una oferta sin usar LLM y devuelve decision, notas y score rapido."""
+    """Evaluate an offer without using the LLM."""
     prefs = perfil.preferencias
     notes: list[str] = []
     should_apply = True
@@ -335,21 +343,15 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
     ubicacion = (oferta.ubicacion or "").strip().lower()
     ubicaciones = _normalize_many(prefs.ubicaciones)
     if should_apply and ubicaciones and ubicacion and not is_remote_offer:
-        ubicacion_match = any(
-            allowed in ubicacion or ubicacion in allowed
-            for allowed in ubicaciones
-        )
+        ubicacion_match = any(allowed in ubicacion or ubicacion in allowed for allowed in ubicaciones)
         if not ubicacion_match:
             should_apply = False
             notes.append(f"Ubicacion fuera de preferencia: {oferta.ubicacion}")
     elif should_apply and is_remote_offer:
         notes.append("Oferta detectada como remota.")
         score += 0.2
-    
-    # Filtrado por países (permitidos/excluidos)
+
     ubicacion_completa = f"{oferta.ubicacion or ''} {oferta.empresa or ''}".lower()
-    
-    # Verificar países excluidos
     paises_excluidos = _normalize_many(prefs.paises_excluidos)
     if should_apply and paises_excluidos:
         for pais in paises_excluidos:
@@ -357,8 +359,7 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
                 should_apply = False
                 notes.append(f"Pais excluido detectado: {pais}")
                 break
-    
-    # Verificar países permitidos (solo si se especificaron)
+
     paises_permitidos = _normalize_many(prefs.paises_permitidos)
     if should_apply and paises_permitidos:
         pais_match = any(pais in ubicacion_completa for pais in paises_permitidos)
@@ -376,7 +377,7 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
     titulo = (oferta.titulo or "").strip().lower()
     roles = _normalize_many(prefs.roles_deseados)
     if should_apply and roles and titulo:
-        role_match = any(role in titulo for role in roles)
+        role_match = any(_contains_exact_term(titulo, role) for role in roles)
         if role_match:
             notes.append("Titulo alineado con roles deseados.")
             score += 0.25
@@ -395,16 +396,13 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
                 notes.append(f"Titulo no alineado: {oferta.titulo}")
 
     desc_lower = (oferta.descripcion + " " + " ".join(oferta.requisitos)).lower()
-
-    # Role keyword gating (for IT-focused profiles with multiple target roles)
     role_keywords = _build_role_keywords(prefs.roles_deseados)
     if should_apply and role_keywords:
         blob = f"{titulo} {desc_lower}"
-        if not any(keyword in blob for keyword in role_keywords):
+        if not any(_contains_exact_term(blob, keyword) for keyword in role_keywords):
             should_apply = False
             notes.append("No coincide con roles deseados.")
 
-    # Seniority checks (IT focus)
     user_level = _seniority_level_from_pref(prefs.nivel_experiencia)
     offer_level = _seniority_level_from_text(f"{oferta.titulo} {desc_lower}")
     if should_apply and offer_level >= 0 and user_level >= 0:
@@ -415,14 +413,13 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
             score += 0.1
             notes.append("Senioridad compatible con tu nivel.")
 
-    # Años de experiencia requeridos
     years_required = _extract_years_required(f"{oferta.titulo} {desc_lower}")
     if should_apply and years_required is not None and prefs.anos_experiencia:
         max_allowed = prefs.anos_experiencia + max(prefs.max_anos_experiencia_extra, 0)
         if years_required > max_allowed:
             should_apply = False
             notes.append(
-                f"Requiere {years_required} años (tu max permitido: {max_allowed})."
+                f"Requiere {years_required} anos (tu max permitido: {max_allowed})."
             )
         else:
             score += 0.05
@@ -438,7 +435,7 @@ def evaluate_offer(oferta: OfertaTrabajo, perfil: PerfilMaestro) -> tuple[bool, 
         if not desc_lower.strip():
             notes.append("Oferta sin descripcion clara; no se valida must-have.")
         else:
-            matched = [skill for skill in must_have if skill in desc_lower]
+            matched = [skill for skill in must_have if _contains_exact_term(desc_lower, skill)]
             if matched:
                 notes.append(f"Must-have detectadas: {', '.join(matched[:5])}")
                 score += min(0.3, 0.1 * len(matched))
