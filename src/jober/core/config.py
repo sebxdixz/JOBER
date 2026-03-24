@@ -177,6 +177,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.z.ai/api/coding/paas/v4"
     llm_model: str = "GLM-4.7-flash"
     llm_temperature: float = 0.2
+    vision_api_key: str = ""
+    vision_base_url: str = ""
+    vision_model: str = ""
+    vision_temperature: float = 0.0
 
     class Config:
         env_file = str(JOBER_ENV_FILE)
@@ -199,4 +203,15 @@ def get_llm(temperature: float | None = None) -> ChatOpenAI:
         temperature=temperature if temperature is not None else settings.llm_temperature,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
+    )
+
+
+def get_vision_llm(temperature: float | None = None) -> ChatOpenAI:
+    """Crea una instancia OpenAI-compatible para modelos multimodales."""
+    settings = load_settings()
+    return ChatOpenAI(
+        model=settings.vision_model or settings.llm_model,
+        temperature=temperature if temperature is not None else settings.vision_temperature,
+        api_key=settings.vision_api_key or settings.llm_api_key,
+        base_url=settings.vision_base_url or settings.llm_base_url,
     )

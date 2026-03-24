@@ -20,8 +20,8 @@ This is an early-stage OSS project. Expect breaking changes while the CLI stabil
 ## Instalacion
 
 ```bash
-git clone https://github.com/<tu-usuario>/jober-cli.git
-cd jober-cli
+git clone https://github.com/sebxdixz/JOBER.git
+cd JOBER
 pip install -e .
 ```
 
@@ -44,11 +44,6 @@ jober init --profile ai
 jober preset-ai --profile ai
 jober scout --limit 5 --per-platform 3 --profile ai
 jober apply-scout --top 1 --profile ai
-```
-
-Modo autonomo:
-
-```bash
 jober run --profile ai
 ```
 
@@ -61,11 +56,6 @@ jober init --profile ai
 jober preset-ai --profile ai
 jober scout --limit 5 --per-platform 3 --profile ai
 jober apply-scout --top 1 --profile ai
-```
-
-Autonomous mode:
-
-```bash
 jober run --profile ai
 ```
 
@@ -119,9 +109,43 @@ pytest -q
 
 ## Auto-apply: notas importantes
 
+- `jober run` no es solo scouting: busca, filtra, genera documentos y luego intenta auto-postular.
+- Al iniciar, `run` reutiliza candidatos del ultimo `scout` como warm start para llegar antes al intento de postulacion.
 - Auto-apply es heuristico y puede fallar segun el formulario.
+- Tiene modo ATS-specific para `Greenhouse` y `Lever`, con selectores y pasos mas agresivos.
+- Tiene modo visual opcional para paginas dificiles usando screenshot + VLM + click por coordenadas.
 - Si detecta campos requeridos no soportados, deja el estado como `preparado`.
+- Estados importantes:
+  - `applied`: hubo envio verificable.
+  - `prepared`: se genero CV/cover y se intento postular, pero el formulario no era totalmente compatible o no hubo confirmacion fuerte.
+  - `filtered`: se descarto antes de generar documentos.
+  - `error`: fallo tecnico en scraping, pipeline o navegador.
 - Respeta limites diarios y delays configurados en tu perfil.
+
+UI local:
+
+```bash
+jober run --ui --ui-port 8765
+```
+
+La UI local muestra:
+- estado del workflow en vivo
+- carpeta fisica por oferta
+- artefactos como `lead_snapshot.json`, `screening_result.json`, `run_trace.json`, `application_result.json`, `cv_adaptado.pdf`
+
+Modo vision opcional:
+
+```bash
+$env:JOBER_VISION_MODE="1"
+```
+
+Si quieres separar el modelo visual del modelo principal, define tambien:
+
+```bash
+$env:VISION_MODEL="tu-modelo-vision"
+$env:VISION_BASE_URL="https://tu-endpoint-openai-compatible"
+$env:VISION_API_KEY="tu-api-key"
+```
 
 ---
 

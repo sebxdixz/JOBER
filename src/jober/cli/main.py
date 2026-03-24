@@ -49,19 +49,22 @@ from jober.core.models import RegistroPostulacion, EstadoPostulacion
 from jober.core.state import JoberState
 from jober.agents.cv_reader import extract_text_from_cvs
 from jober.agents.auto_apply import auto_apply_to_job
-from jober.agents.autonomous_search import find_new_opportunities_by_platform
-from jober.agents.job_scraper import job_scraper_node
-from jober.agents.offer_evaluator import evaluate_offer
+from jober.agents.autonomous_search import find_new_leads_by_platform, lead_to_oferta
+from jober.agents.offer_evaluator import evaluate_offer, evaluate_offer_for_scout
 from jober.agents.orchestrator import build_init_graph, build_apply_graph
 from jober.cli.preferences_flow import run_preferences_flow
 from jober.core.models import PerfilMaestro, PreferenciasLaborales
 from jober.utils.file_io import (
+    ensure_job_output_dir,
     load_last_scout,
     load_perfil_maestro,
     save_application_output,
     save_last_scout,
     save_perfil_maestro,
+    write_output_artifact,
 )
+from jober.utils.runtime_status import update_status, upsert_job
+from jober.utils.status_server import start_status_server, stop_status_server
 from jober.utils.tracking import add_record, get_stats
 from jober.cli.autonomous import autonomous_run_loop
 
@@ -72,7 +75,16 @@ app = typer.Typer(
 )
 profile_app = typer.Typer(
     name="profile",
-    help="Gestion de perfiles (multi-profile).",
+    help=(
+        "Gestion de perfiles (multi-profile).\n\n"
+        "Ejemplos:\n"
+        "  jober profile list\n"
+        "  jober profile create data\n"
+        "  jober profile create --id ai-remote --copy-from default\n"
+        "  jober profile use data\n"
+        "  jober profile info --profile data"
+    ),
+    no_args_is_help=True,
 )
 console = Console(force_terminal=True)
 
@@ -92,6 +104,29 @@ def _estado_from_application_result(enviado: bool, mensaje: str) -> EstadoPostul
     return EstadoPostulacion.FALLIDO
 
 
+def _coerce_profile_id(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    candidate = raw_value.strip()
+    if not candidate or not any(char.isalnum() for char in candidate):
+        return None
+    return normalize_profile_id(candidate)
+
+
+def _resolve_profile_id_input(
+    profile_id: str | None,
+    option_value: str | None,
+    *,
+    prompt_text: str,
+) -> str:
+    resolved = _coerce_profile_id(option_value) or _coerce_profile_id(profile_id)
+    while resolved is None:
+        resolved = _coerce_profile_id(Prompt.ask(prompt_text))
+        if resolved is None:
+            console.print("[yellow]Ingresa un ID valido usando letras, numeros, '-' o '_' .[/yellow]")
+    return resolved
+
+
 def _build_ai_remote_preferences(existing: PreferenciasLaborales | None = None) -> PreferenciasLaborales:
     prefs = existing.model_copy(deep=True) if existing is not None else PreferenciasLaborales()
     prefs.roles_deseados = [
@@ -99,6 +134,10 @@ def _build_ai_remote_preferences(existing: PreferenciasLaborales | None = None) 
         "LLM Engineer",
         "ML Engineer",
         "MLOps Engineer",
+        "AI Ops",
+        "LLM Ops",
+        "Data Scientist",
+        "Data Analyst",
         "AI Automation Engineer",
     ]
     prefs.nivel_experiencia = prefs.nivel_experiencia or "mid"
@@ -311,19 +350,45 @@ def apply(
     if isinstance(result, dict):
         result = JoberState(**{k: v for k, v in result.items() if k in JoberState.model_fields})
 
+    output_dir = ensure_job_output_dir(
+        profile_id,
+        result.oferta if result.oferta else None,
+        url=url,
+        plataforma=result.oferta.plataforma if result.oferta else "",
+        empresa=result.oferta.empresa if result.oferta else "",
+        cargo=result.oferta.titulo if result.oferta else "",
+    )
+
+    write_output_artifact(output_dir, "apply_trace.json", {
+        "job_url": url,
+        "profile_id": profile_id,
+        "timestamp": datetime.now().isoformat(),
+        "error": result.error,
+        "should_apply": result.should_apply,
+        "screening_notes": result.screening_notes,
+        "oferta": result.oferta.model_dump(),
+        "match_score": result.documentos.match_score,
+    })
+
     if result.error:
         console.print(f"[red]Error: {result.error}[/red]")
+        console.print(f"[dim]Traza guardada en: {output_dir}[/dim]")
         raise typer.Exit(1)
 
     if not result.should_apply:
         notes = "\n".join(f"- {note}" for note in result.screening_notes) or "- Oferta filtrada"
         console.print(Panel.fit(
-            f"[bold yellow]Oferta filtrada antes de generar documentos[/bold yellow]\n\n{notes}",
+            f"[bold yellow]Oferta filtrada antes de generar documentos[/bold yellow]\n\n{notes}\n\nTraza guardada en:\n  {output_dir}",
             border_style="yellow",
         ))
         raise typer.Exit(0)
 
-    output_dir = save_application_output(result.oferta, result.documentos, profile_id=profile_id)
+    output_dir = save_application_output(
+        result.oferta,
+        result.documentos,
+        profile_id=profile_id,
+        output_dir=output_dir,
+    )
     application_result = asyncio.run(
         auto_apply_to_job(
             result.oferta,
@@ -334,7 +399,13 @@ def apply(
         )
     )
     result.resultado_aplicacion = application_result
-    save_application_output(result.oferta, result.documentos, application_result, profile_id=profile_id)
+    save_application_output(
+        result.oferta,
+        result.documentos,
+        application_result,
+        profile_id=profile_id,
+        output_dir=output_dir,
+    )
 
     estado = _estado_from_application_result(application_result.enviado, application_result.mensaje)
 
@@ -439,6 +510,10 @@ def doctor(
         except Exception:
             return False
 
+    search_provider = os.getenv("JOBER_SEARCH_PROVIDER", "duckduckgo").strip().lower()
+    search_key = os.getenv("JOBER_SEARCH_API_KEY", "").strip()
+    needs_key = search_provider in {"serper", "serpapi"}
+
     has_latex = bool(shutil.which("pdflatex") or shutil.which("xelatex"))
     has_playwright = _check_import("playwright")
     has_reportlab = _check_import("reportlab")
@@ -467,6 +542,11 @@ def doctor(
         "ReportLab (PDF fallback)",
         "OK" if has_reportlab else "MISSING",
         "Requerido para PDF sin navegador",
+    )
+    table.add_row(
+        f"Search provider ({search_provider})",
+        "OK" if (not needs_key or search_key) else "MISSING",
+        "Configura JOBER_SEARCH_API_KEY si usas serper/serpapi",
     )
     table.add_row(
         "Playwright (PDF via Chromium)",
@@ -513,6 +593,8 @@ def scout(
     limit: int = typer.Option(5, "--limit", "-l", help="Cantidad de ofertas a evaluar"),
     per_platform: int = typer.Option(5, "--per-platform", help="Resultados iniciales por plataforma"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Perfil a usar (default: activo)"),
+    ui: bool = typer.Option(True, "--ui/--no-ui", help="Mostrar UI local en vivo"),
+    ui_port: int = typer.Option(8765, "--ui-port", help="Puerto de la UI local"),
 ):
     """Busca y rankea ofertas en vivo sin aplicar automaticamente."""
     profile_id = resolve_profile_id(profile)
@@ -521,94 +603,148 @@ def scout(
         console.print("[red]No hay perfil maestro. Ejecuta 'jober init' primero.[/red]")
         raise typer.Exit(1)
 
-    grouped_urls = asyncio.run(find_new_opportunities_by_platform(perfil, max_per_platform=per_platform))
-    urls = []
-    for idx in range(per_platform):
-        for platform in ["linkedin", "getonbrd", "meetfrank"]:
-            platform_urls = grouped_urls.get(platform, [])
-            if idx < len(platform_urls):
-                urls.append(platform_urls[idx])
+    server = None
+    if ui:
+        server = start_status_server(profile_id, port=ui_port)
+        if server is None:
+            console.print("[yellow]No se pudo iniciar la UI local (puerto ocupado).[/yellow]")
+        else:
+            console.print(f"[green]UI local: http://127.0.0.1:{ui_port}[/green]")
 
-    if not urls:
-        save_last_scout({
+    update_status(profile_id, mode="scout", stage="searching", message="Buscando ofertas...", jobs=[])
+
+    meetfrank_engine = os.getenv("JOBER_MEETFRANK_ENGINE", "").strip().lower()
+    if meetfrank_engine == "playwright" and "meetfrank" in perfil.preferencias.plataformas_activas:
+        console.print(
+            "[yellow]MeetFrank usa Playwright: mas lento y puede generar costos extra.[/yellow]"
+        )
+
+    try:
+        fetch_per_platform = max(per_platform * 3, 12)
+        grouped_leads = asyncio.run(find_new_leads_by_platform(perfil, max_per_platform=fetch_per_platform))
+        counts = {platform: len(leads) for platform, leads in grouped_leads.items()}
+        if counts:
+            summary = " | ".join(f"{platform}: {count}" for platform, count in counts.items())
+            console.print(f"[dim]Leads por plataforma: {summary}[/dim]")
+            update_status(
+                profile_id,
+                stage="ranking",
+                message=f"Leads por plataforma: {summary}",
+            )
+
+        leads = []
+        platform_order = [p for p in ["linkedin", "getonbrd", "meetfrank", "rss"] if p in grouped_leads]
+        for idx in range(fetch_per_platform):
+            for platform in platform_order:
+                platform_leads = grouped_leads.get(platform, [])
+                if idx < len(platform_leads):
+                    leads.append(platform_leads[idx])
+
+        if not leads:
+            save_last_scout({
+                "generated_at": datetime.now().isoformat(),
+                "limit": limit,
+                "per_platform": per_platform,
+                "candidates": [],
+            }, profile_id)
+            console.print("[yellow]No se encontraron ofertas nuevas.[/yellow]")
+            raise typer.Exit(0)
+
+        ranked: list[tuple[object, float, JoberState]] = []
+        filtered_reasons: dict[str, int] = {}
+        console.print(f"[cyan]Evaluando {len(leads)} ofertas...[/cyan]")
+        for lead in leads:
+            oferta = lead_to_oferta(lead)
+            show_candidate, notes, quick_score = evaluate_offer_for_scout(oferta, perfil)
+            if not show_candidate:
+                reason = notes[0] if notes else "Filtrada"
+                filtered_reasons[reason] = filtered_reasons.get(reason, 0) + 1
+                upsert_job(profile_id, {
+                    "url": lead.url,
+                    "title": oferta.titulo,
+                    "company": oferta.empresa,
+                    "location": oferta.ubicacion,
+                    "platform": oferta.plataforma,
+                    "status": "filtered",
+                })
+                continue
+            ranked.append((
+                lead,
+                quick_score,
+                JoberState(
+                    job_url=lead.url,
+                    perfil=perfil,
+                    oferta=oferta,
+                    should_apply=True,
+                    screening_notes=notes,
+                ),
+            ))
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        ranked = ranked[:limit]
+
+        scout_payload = {
             "generated_at": datetime.now().isoformat(),
             "limit": limit,
             "per_platform": per_platform,
-            "candidates": [],
-        }, profile_id)
-        console.print("[yellow]No se encontraron ofertas nuevas.[/yellow]")
-        raise typer.Exit(0)
+            "candidates": [
+                {
+                    "rank": idx,
+                    "url": lead.url,
+                    "score": score,
+                    "empresa": result.oferta.empresa,
+                    "cargo": result.oferta.titulo,
+                    "ubicacion": result.oferta.ubicacion,
+                    "plataforma": result.oferta.plataforma,
+                    "source": getattr(lead, "source", ""),
+                    "snippet": getattr(lead, "snippet", ""),
+                    "screening_notes": result.screening_notes,
+                }
+                for idx, (lead, score, result) in enumerate(ranked, 1)
+            ],
+        }
+        save_last_scout(scout_payload, profile_id)
 
-    ranked: list[tuple[str, float, JoberState]] = []
-    console.print(f"[cyan]Evaluando {min(len(urls), max(limit * 2, limit))} ofertas...[/cyan]")
-    for url in urls[: max(limit * 2, limit)]:
-        scrape_result = asyncio.run(job_scraper_node(JoberState(job_url=url, perfil=perfil)))
-        if scrape_result.get("error"):
-            continue
-        oferta = scrape_result["oferta"]
-        should_apply, notes, quick_score = evaluate_offer(oferta, perfil)
-        if not should_apply:
-            continue
-        ranked.append((
-            url,
-            quick_score,
-            JoberState(
-                job_url=url,
-                perfil=perfil,
-                oferta=oferta,
-                should_apply=should_apply,
-                screening_notes=notes,
-            ),
-        ))
+        if not ranked:
+            if filtered_reasons:
+                summary = " | ".join(f"{reason}: {count}" for reason, count in filtered_reasons.items())
+                console.print(f"[dim]Motivos de descarte: {summary}[/dim]")
+            console.print("[yellow]No hubo ofertas que pasaran el screening.[/yellow]")
+            raise typer.Exit(0)
 
-    ranked.sort(key=lambda item: item[1], reverse=True)
-    ranked = ranked[:limit]
+        table = Table(title=f"Ofertas rankeadas ({profile_id})")
+        table.add_column("#", style="cyan", width=3)
+        table.add_column("Empresa", style="green")
+        table.add_column("Cargo", style="white")
+        table.add_column("Match", style="magenta", width=8)
+        table.add_column("Ubicacion", style="yellow")
+        table.add_column("URL", style="blue")
 
-    scout_payload = {
-        "generated_at": datetime.now().isoformat(),
-        "limit": limit,
-        "per_platform": per_platform,
-        "candidates": [
-            {
-                "rank": idx,
-                "url": url,
-                "score": score,
-                "empresa": result.oferta.empresa,
-                "cargo": result.oferta.titulo,
-                "ubicacion": result.oferta.ubicacion,
-                "plataforma": result.oferta.plataforma,
-                "screening_notes": result.screening_notes,
-            }
-            for idx, (url, score, result) in enumerate(ranked, 1)
-        ],
-    }
-    save_last_scout(scout_payload, profile_id)
+        for idx, (lead, score, result) in enumerate(ranked, 1):
+            upsert_job(profile_id, {
+                "url": lead.url,
+                "title": result.oferta.titulo,
+                "company": result.oferta.empresa,
+                "location": result.oferta.ubicacion,
+                "platform": result.oferta.plataforma,
+                "status": "ranked",
+                "score": f"{score:.0%}",
+            })
+            table.add_row(
+                str(idx),
+                result.oferta.empresa or "-",
+                result.oferta.titulo or "-",
+                f"{score:.0%}",
+                result.oferta.ubicacion or "-",
+                lead.url,
+            )
 
-    if not ranked:
-        console.print("[yellow]No hubo ofertas que pasaran el screening.[/yellow]")
-        raise typer.Exit(0)
-
-    table = Table(title=f"Ofertas rankeadas ({profile_id})")
-    table.add_column("#", style="cyan", width=3)
-    table.add_column("Empresa", style="green")
-    table.add_column("Cargo", style="white")
-    table.add_column("Match", style="magenta", width=8)
-    table.add_column("Ubicacion", style="yellow")
-    table.add_column("URL", style="blue")
-
-    for idx, (url, score, result) in enumerate(ranked, 1):
-        table.add_row(
-            str(idx),
-            result.oferta.empresa or "-",
-            result.oferta.titulo or "-",
-            f"{score:.0%}",
-            result.oferta.ubicacion or "-",
-            url,
-        )
-
-    console.print(table)
-    console.print("\n[bold yellow]Para aplicar una:[/bold yellow] `jober apply \"<url>\"`")
-    console.print("[bold yellow]Para aplicar desde este scout:[/bold yellow] `jober apply-scout --top 1` o `jober apply-scout --all`")
+        console.print(table)
+        console.print("\n[bold yellow]Para aplicar una:[/bold yellow] `jober apply \"<url>\"`")
+        console.print("[bold yellow]Para aplicar desde este scout:[/bold yellow] `jober apply-scout --top 1` o `jober apply-scout --all`")
+    finally:
+        update_status(profile_id, stage="done", message="Scout finalizado")
+        stop_status_server(server)
 
 
 @app.command("apply-scout")
@@ -645,6 +781,9 @@ def run(
     max_iterations: int = typer.Option(None, "--max-iterations", "-n", help="Numero maximo de iteraciones (None = infinito)"),
     per_platform: int = typer.Option(3, "--per-platform", help="Cantidad de ofertas iniciales por plataforma en cada ronda"),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Perfil a usar (default: activo)"),
+    ui: bool = typer.Option(True, "--ui/--no-ui", help="Mostrar UI local en vivo"),
+    ui_port: int = typer.Option(8765, "--ui-port", help="Puerto de la UI local"),
+    sleep_seconds: int = typer.Option(120, "--sleep", help="Segundos entre iteraciones"),
 ):
     """Iniciar busqueda autonoma continua de ofertas y aplicacion automatica."""
     profile_id = resolve_profile_id(profile)
@@ -653,7 +792,16 @@ def run(
         console.print("[red]No hay perfil maestro. Ejecuta 'jober init' primero.[/red]")
         raise typer.Exit(1)
 
-    asyncio.run(autonomous_run_loop(max_iterations=max_iterations, per_platform=per_platform, profile_id=profile_id))
+    asyncio.run(
+        autonomous_run_loop(
+            max_iterations=max_iterations,
+            per_platform=per_platform,
+            profile_id=profile_id,
+            ui=ui,
+            ui_port=ui_port,
+            sleep_seconds=sleep_seconds,
+        )
+    )
 
 
 @app.command()
@@ -667,11 +815,20 @@ def tutorial():
         "   jober preset-ai --profile ai\n"
         "3. Scout manual:\n"
         "   jober scout --limit 5 --per-platform 3 --profile ai\n"
+        "   UI local (auto-refresh):\n"
+        "   jober scout --ui --ui-port 8765\n"
         "4. Aplica a una URL o desde el scout:\n"
         "   jober apply \"<url>\" --profile ai\n"
         "   jober apply-scout --top 2 --profile ai\n"
         "5. Modo autonomo:\n"
         "   jober run --profile ai\n"
+        "   UI local (auto-refresh):\n"
+        "   jober run --ui --ui-port 8765\n"
+        "\n"
+        "MeetFrank con Playwright (mas lento / mas costo):\n"
+        "   $env:JOBER_MEETFRANK_ENGINE=\"playwright\"\n"
+        "Vision mode opcional para formularios dificiles:\n"
+        "   $env:JOBER_VISION_MODE=\"1\"\n"
         "\n"
         "Perfiles:\n"
         "   jober profile list\n"
@@ -692,11 +849,20 @@ def tutorial():
         "   jober preset-ai --profile ai\n"
         "3. Manual scout:\n"
         "   jober scout --limit 5 --per-platform 3 --profile ai\n"
+        "   Local UI (auto-refresh):\n"
+        "   jober scout --ui --ui-port 8765\n"
         "4. Apply to one URL or from scout:\n"
         "   jober apply \"<url>\" --profile ai\n"
         "   jober apply-scout --top 2 --profile ai\n"
         "5. Autonomous mode:\n"
         "   jober run --profile ai\n"
+        "   Local UI (auto-refresh):\n"
+        "   jober run --ui --ui-port 8765\n"
+        "\n"
+        "MeetFrank with Playwright (slower / higher cost):\n"
+        "   $env:JOBER_MEETFRANK_ENGINE=\"playwright\"\n"
+        "Optional vision mode for difficult forms:\n"
+        "   $env:JOBER_VISION_MODE=\"1\"\n"
         "\n"
         "Profiles:\n"
         "   jober profile list\n"
@@ -731,12 +897,22 @@ def profile_list():
 
 @profile_app.command("use")
 def profile_use(
-    profile_id: str = typer.Argument(..., help="ID del perfil a activar"),
+    profile_id: str | None = typer.Argument(None, help="ID del perfil a activar"),
+    profile_id_option: str | None = typer.Option(None, "--id", "-i", help="ID del perfil a activar"),
 ):
-    """Activa un perfil existente."""
-    profile_id = normalize_profile_id(profile_id)
+    """Activa un perfil existente. Si omites el ID, lo pide por prompt."""
     ensure_profile_dirs(get_active_profile_id())
     existing = list_profile_ids()
+    if not existing:
+        console.print("[yellow]No hay perfiles creados aun. Usa `jober profile create`.[/yellow]")
+        raise typer.Exit(1)
+    if profile_id is None and profile_id_option is None:
+        console.print(f"Perfiles disponibles: {', '.join(existing)}")
+    profile_id = _resolve_profile_id_input(
+        profile_id,
+        profile_id_option,
+        prompt_text="ID del perfil a activar",
+    )
     if profile_id not in existing:
         console.print(f"[red]Perfil '{profile_id}' no existe. Usa `jober profile create {profile_id}`.[/red]")
         raise typer.Exit(1)
@@ -746,12 +922,17 @@ def profile_use(
 
 @profile_app.command("create")
 def profile_create(
-    profile_id: str = typer.Argument(..., help="ID del perfil a crear"),
+    profile_id: str | None = typer.Argument(None, help="ID del perfil a crear"),
+    profile_id_option: str | None = typer.Option(None, "--id", "-i", help="ID del perfil a crear"),
     copy_from: str | None = typer.Option(None, "--copy-from", help="Clonar perfil base"),
     activate: bool = typer.Option(True, "--activate/--no-activate", help="Activar al crear"),
 ):
-    """Crea un nuevo perfil."""
-    profile_id = normalize_profile_id(profile_id)
+    """Crea un nuevo perfil. Si omites el ID, lo pide por prompt."""
+    profile_id = _resolve_profile_id_input(
+        profile_id,
+        profile_id_option,
+        prompt_text="ID del nuevo perfil",
+    )
     if profile_id in list_profile_ids():
         console.print(f"[yellow]El perfil '{profile_id}' ya existe.[/yellow]")
         if activate:

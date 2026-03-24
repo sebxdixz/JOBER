@@ -47,6 +47,7 @@ TEMAS QUE DEBES CUBRIR (en orden natural, no rígido):
 2. EXPERIENCIA Y NIVEL
    - ¿Cuántos años de experiencia tiene en este área?
    - ¿Se considera junior, mid-level, senior, o no sabe?
+   - En perfiles informáticos, confirma seniority con etiquetas claras: junior/mid/senior/lead/staff/principal
    - ¿Ha tenido alguna experiencia laboral relevante? (aunque sea informal, freelance, prácticas)
    - ¿Qué es lo más destacado que ha logrado profesionalmente?
 
@@ -126,7 +127,7 @@ preferencias laborales durante una entrevista de onboarding.
 Extrae TODA la información y devuelve un JSON con este schema exacto:
 {{
     "roles_deseados": ["rol1", "rol2"],
-    "nivel_experiencia": "junior|mid|senior|lead",
+    "nivel_experiencia": "junior|mid|senior|lead|staff|principal",
     "anos_experiencia": 3,
     "resumen_candidato": "Frase que resume su perfil profesional",
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +21,53 @@ from jober.utils.pdf_export import (
     export_cv_to_pdf,
     export_latex_to_pdf_sync,
 )
+
+
+def _safe_fragment(value: str, default: str, max_len: int = 30) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", (value or "").strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return (cleaned[:max_len] or default)
+
+
+def ensure_job_output_dir(
+    profile_id: str | None = None,
+    oferta: OfertaTrabajo | None = None,
+    *,
+    url: str = "",
+    plataforma: str = "",
+    empresa: str = "",
+    cargo: str = "",
+    timestamp: str | None = None,
+) -> Path:
+    """Crea una carpeta unica por oferta/intento y devuelve su ruta."""
+    paths = ensure_profile_dirs(profile_id)
+    job_url = url or (oferta.url if oferta else "")
+    platform = plataforma or (oferta.plataforma if oferta else "") or "job"
+    company = empresa or (oferta.empresa if oferta else "") or "unknown"
+    title = cargo or (oferta.titulo if oferta else "") or "job"
+    stamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    url_hash = hashlib.sha1((job_url or f"{platform}:{company}:{title}:{stamp}").encode("utf-8")).hexdigest()[:8]
+    folder_name = "_".join([
+        stamp,
+        _safe_fragment(platform, "job", max_len=16),
+        _safe_fragment(company, "unknown"),
+        _safe_fragment(title, "job"),
+        url_hash,
+    ])
+    output_dir = paths.postulaciones_dir / folder_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def write_output_artifact(output_dir: Path, filename: str, payload: dict) -> Path:
+    """Guarda un artefacto JSON dentro de una carpeta de postulacion."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = output_dir / filename
+    artifact_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return artifact_path
 
 
 def save_perfil_maestro(perfil: PerfilMaestro, profile_id: str | None = None) -> Path:
@@ -62,17 +111,10 @@ def save_application_output(
     documentos: DocumentosGenerados,
     resultado_aplicacion: ResultadoAplicacion | None = None,
     profile_id: str | None = None,
+    output_dir: Path | None = None,
 ) -> Path:
     """Guarda los documentos generados (Markdown + PDF) en una carpeta por postulacion."""
-    paths = ensure_profile_dirs(profile_id)
-
-    timestamp = datetime.now().strftime("%Y%m%d")
-    empresa = oferta.empresa.replace(" ", "_")[:30] if oferta.empresa else "unknown"
-    cargo = oferta.titulo.replace(" ", "_")[:30] if oferta.titulo else "job"
-    folder_name = f"{timestamp}_{oferta.plataforma}_{empresa}_{cargo}"
-
-    output_dir = paths.postulaciones_dir / folder_name
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = output_dir or ensure_job_output_dir(profile_id, oferta)
 
     # CV adaptado (Markdown + PDF)
     if documentos.cv_adaptado_tex:
@@ -144,17 +186,10 @@ async def save_application_output_async(
     documentos: DocumentosGenerados,
     resultado_aplicacion: ResultadoAplicacion | None = None,
     profile_id: str | None = None,
+    output_dir: Path | None = None,
 ) -> Path:
     """Version async de save_application_output (para uso dentro de jober run)."""
-    paths = ensure_profile_dirs(profile_id)
-
-    timestamp = datetime.now().strftime("%Y%m%d")
-    empresa = oferta.empresa.replace(" ", "_")[:30] if oferta.empresa else "unknown"
-    cargo = oferta.titulo.replace(" ", "_")[:30] if oferta.titulo else "job"
-    folder_name = f"{timestamp}_{oferta.plataforma}_{empresa}_{cargo}"
-
-    output_dir = paths.postulaciones_dir / folder_name
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = output_dir or ensure_job_output_dir(profile_id, oferta)
 
     # CV adaptado (Markdown + PDF)
     if documentos.cv_adaptado_tex:

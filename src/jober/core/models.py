@@ -155,6 +155,17 @@ class OfertaTrabajo(BaseModel):
     fecha_scraping: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
+class JobLead(BaseModel):
+    """Lead liviano obtenido desde buscadores/APIs antes del scraping profundo."""
+
+    url: str = ""
+    titulo: str = ""
+    empresa: str = ""
+    ubicacion: str = ""
+    plataforma: str = ""
+    snippet: str = ""
+    source: str = ""
+
 # ── Tracking ────────────────────────────────────────────────────────────────
 
 class EstadoPostulacion(str, Enum):
