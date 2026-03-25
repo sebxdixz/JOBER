@@ -1777,16 +1777,13 @@ IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas has
         trace(f"Configurando browser-use")
         
         # browser-use requiere configuración específica
-        # Crear agente sin LLM personalizado - usará el modelo por defecto
-        # o configurar con variables de entorno
         from jober.core.config import load_settings
         import os
         
         settings = load_settings()
         
-        # Configurar variables de entorno para browser-use
-        os.environ["OPENAI_API_KEY"] = settings.llm_api_key
-        os.environ["OPENAI_BASE_URL"] = settings.llm_base_url
+        # Configurar API key de browser-use
+        os.environ["BROWSER_USE_API_KEY"] = "bu_YOAFwAjQA_LEJ8EESf1mb6um0Lg7-RXwfxgiF9cQ1-0"
         
         trace(f"Configuración de API establecida")
         
