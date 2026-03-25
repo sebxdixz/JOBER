@@ -1701,10 +1701,14 @@ async def _apply_universal_agent(
     
     try:
         # Preparar información del perfil para el prompt
+        trace(f"Preparando información del perfil: {perfil.nombre}")
+        
         experiencias_list = perfil.experiencias if perfil.experiencias else []
+        trace(f"Experiencias: {type(experiencias_list)}, len={len(experiencias_list)}")
+        
         experiencias_text = "\n".join([
             f"- {exp.cargo} en {exp.empresa} ({exp.fecha_inicio} - {exp.fecha_fin or 'Presente'})"
-            for exp in experiencias_list[:3]
+            for exp in (experiencias_list[:3] if isinstance(experiencias_list, list) else [])
         ]) if experiencias_list else "No especificado"
         
         educacion_list = perfil.educacion if perfil.educacion else []
@@ -1716,11 +1720,19 @@ async def _apply_universal_agent(
         habilidades_list = perfil.habilidades_tecnicas if perfil.habilidades_tecnicas else []
         habilidades_text = ", ".join(habilidades_list[:10]) if habilidades_list else "No especificado"
         
-        links_list = perfil.links if perfil.links else []
-        links_text = "\n".join([
-            f"- {link.tipo}: {link.url}"
-            for link in links_list[:3]
-        ]) if links_list else "No especificado"
+        # Links puede ser dict o list
+        links_dict = perfil.links if perfil.links else {}
+        if isinstance(links_dict, dict):
+            links_text = "\n".join([
+                f"- {tipo}: {url}"
+                for tipo, url in list(links_dict.items())[:3]
+            ]) if links_dict else "No especificado"
+        else:
+            # Si es lista de objetos Link
+            links_text = "\n".join([
+                f"- {link.tipo}: {link.url}"
+                for link in links_dict[:3]
+            ]) if links_dict else "No especificado"
         
         # Crear el task prompt con toda la información del candidato
         task_prompt = f"""Eres un asistente de aplicación de empleo. Tu ÚNICO objetivo es completar el formulario de aplicación en esta página web.
@@ -1733,7 +1745,7 @@ Ubicación: {perfil.ubicacion_actual}
 Título profesional: {perfil.titulo_profesional}
 
 Resumen profesional:
-{perfil.resumen[:500] if perfil.resumen else 'No especificado'}
+{(perfil.resumen[:500] if perfil.resumen else 'No especificado')}
 
 Experiencia laboral:
 {experiencias_text}
@@ -1764,13 +1776,23 @@ IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas has
 
         trace(f"Configurando browser-use con modelo de visión")
         
-        # Obtener LLM con capacidades de visión
-        try:
-            llm = get_vision_llm(temperature=0.1)
-        except Exception as e:
-            logger.warning(f"No se pudo obtener LLM de visión, usando LLM estándar: {e}")
-            from jober.core.config import get_llm
-            llm = get_llm(temperature=0.1)
+        # browser-use requiere configuración específica del LLM
+        # Usar la configuración de settings directamente
+        from jober.core.config import load_settings
+        from langchain_openai import ChatOpenAI
+        
+        settings = load_settings()
+        
+        # Crear LLM compatible con browser-use
+        # browser-use funciona mejor con modelos de OpenAI o compatibles
+        llm = ChatOpenAI(
+            model=settings.llm_model,
+            temperature=0.1,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+        )
+        
+        trace(f"LLM configurado: {settings.llm_model}")
         
         # Crear agente con browser-use
         # Browser se crea automáticamente por el agente
@@ -1818,8 +1840,11 @@ IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas has
         )
         
     except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
         logger.exception("Fallo agente universal para {}: {}", oferta.url, exc)
         trace(f"Error en agente universal: {exc}")
+        trace(f"Traceback completo: {tb}")
         return _finalize_result(
             result,
             None,
