@@ -1484,14 +1484,79 @@ async def _apply_linkedin(
             trace(f"LinkedIn: botón encontrado con análisis inteligente - {message}")
 
         page = await _settle_page(page)
+        
+        # Detectar qué tipo de aplicación se abrió
+        trace("LinkedIn: detectando tipo de aplicación")
+        
+        # Opción 1: Modal de Easy Apply
         form_context = await _wait_for_form_context(page, LINKEDIN_FORM_SELECTORS)
+        
         if form_context is None:
-            return _finalize_result(
-                result,
-                page,
-                enviado=False,
-                mensaje="LinkedIn no expuso el formulario de Easy Apply.",
+            # Opción 2: Redirección a página externa o aplicación normal
+            trace("LinkedIn: no es Easy Apply modal, verificando redirección")
+            
+            # Verificar si cambió la URL (redirección externa)
+            current_url = page.url
+            if "linkedin.com/jobs" not in current_url.lower():
+                trace(f"LinkedIn: redirigido a sitio externo: {current_url}")
+                # Detectar ATS del sitio externo
+                external_ats = _detect_ats(current_url)
+                if external_ats != "unsupported":
+                    trace(f"LinkedIn: sitio externo es {external_ats}, delegando")
+                    return await _route_apply(
+                        page, external_ats, oferta, perfil, cv_pdf, cover_letter_pdf, cover_letter_text, trace
+                    )
+                else:
+                    # Sitio externo desconocido, usar fallback genérico
+                    trace("LinkedIn: sitio externo desconocido, usando fallback genérico")
+                    return await _apply_fallback(
+                        page, oferta, perfil, cv_pdf, cover_letter_pdf, cover_letter_text, trace
+                    )
+            
+            # Opción 3: Página de aplicación de LinkedIn (no modal)
+            trace("LinkedIn: buscando formulario en página completa")
+            
+            # Buscar formulario genérico
+            generic_form_selectors = (
+                "form",
+                "div[role='main']",
+                "main",
+                "div.jobs-apply",
+                "div[class*='apply']",
             )
+            
+            form_context = await _wait_for_form_context(page, generic_form_selectors, frame_hints=())
+            
+            if form_context is None:
+                # No hay formulario visible, puede requerir login o la oferta expiró
+                trace("LinkedIn: no se encontró formulario de aplicación")
+                
+                # Verificar si requiere login
+                login_required = await page.locator("text=/sign in|log in|iniciar sesión/i").count() > 0
+                if login_required:
+                    return _finalize_result(
+                        result,
+                        page,
+                        enviado=False,
+                        mensaje="LinkedIn requiere iniciar sesión para aplicar.",
+                    )
+                
+                # Verificar si la oferta expiró
+                expired = await page.locator("text=/expired|no longer|ya no está|expiró/i").count() > 0
+                if expired:
+                    return _finalize_result(
+                        result,
+                        page,
+                        enviado=False,
+                        mensaje="La oferta de LinkedIn ya no está disponible o expiró.",
+                    )
+                
+                return _finalize_result(
+                    result,
+                    page,
+                    enviado=False,
+                    mensaje="LinkedIn no expuso formulario de aplicación.",
+                )
 
         first_name, last_name = _split_name(perfil.nombre)
         field_map = (
