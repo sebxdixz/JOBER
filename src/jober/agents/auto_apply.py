@@ -25,9 +25,10 @@ from jober.core.config import ensure_profile_dirs, get_active_profile_id, get_vi
 from jober.core.logging import logger
 from jober.core.models import OfertaTrabajo, PerfilMaestro, ResultadoAplicacion
 
-# Browser-use imports for universal agent
+# Browser-use imports for universal agent (100% local, open source)
 try:
     from browser_use import Agent, Browser
+    from browser_use.llm.openai.chat import ChatOpenAI as BrowserUseChatOpenAI
     BROWSER_USE_AVAILABLE = True
 except ImportError:
     BROWSER_USE_AVAILABLE = False
@@ -1682,13 +1683,13 @@ async def _apply_universal_agent(
     cover_letter_md: str,
     trace: TraceFn,
 ) -> ResultadoAplicacion:
-    """Agente Universal usando browser-use para ATS desconocidos.
-    
-    Este agente usa visión y árboles de accesibilidad para navegar
-    dinámicamente cualquier formulario de aplicación.
+    """Agente Universal 100% local y Open Source usando browser-use.
+
+    Usa Playwright local + el LLM configurado en JOBER (via OpenAI-compatible API).
+    No requiere créditos cloud ni suscripciones externas.
     """
     result = _new_result(oferta, "universal_agent")
-    
+
     if not BROWSER_USE_AVAILABLE:
         return _finalize_result(
             result,
@@ -1696,55 +1697,50 @@ async def _apply_universal_agent(
             enviado=False,
             mensaje="browser-use no está instalado. Ejecuta: pip install browser-use",
         )
-    
-    trace("Iniciando Agente Universal con browser-use")
-    
+
+    trace("Iniciando Agente Universal LOCAL con browser-use")
+
+    browser = None
     try:
-        # Preparar información del perfil para el prompt
-        trace(f"Preparando información del perfil: {perfil.nombre}")
-        
-        experiencias_list = perfil.experiencias if perfil.experiencias else []
-        trace(f"Experiencias: {type(experiencias_list)}, len={len(experiencias_list)}")
-        
-        experiencias_text = "\n".join([
-            f"- {exp.cargo} en {exp.empresa} ({exp.fecha_inicio} - {exp.fecha_fin or 'Presente'})"
-            for exp in (experiencias_list[:3] if isinstance(experiencias_list, list) else [])
-        ]) if experiencias_list else "No especificado"
-        
-        educacion_list = perfil.educacion if perfil.educacion else []
-        educacion_text = "\n".join([
-            f"- {edu.titulo} en {edu.institucion} ({edu.fecha_fin or 'En curso'})"
-            for edu in educacion_list[:2]
-        ]) if educacion_list else "No especificado"
-        
-        habilidades_list = perfil.habilidades_tecnicas if perfil.habilidades_tecnicas else []
-        habilidades_text = ", ".join(habilidades_list[:10]) if habilidades_list else "No especificado"
-        
-        # Links puede ser dict o list
-        links_dict = perfil.links if perfil.links else {}
-        if isinstance(links_dict, dict):
-            links_text = "\n".join([
-                f"- {tipo}: {url}"
-                for tipo, url in list(links_dict.items())[:3]
-            ]) if links_dict else "No especificado"
+        # ── 1. Preparar datos del perfil ────────────────────────────
+        experiencias_list = list(perfil.experiencias or [])
+        educacion_list = list(perfil.educacion or [])
+        habilidades_list = list(perfil.habilidades_tecnicas or [])
+        links_raw = perfil.links or {}
+
+        experiencias_text = "\n".join(
+            f"- {e.cargo} en {e.empresa} ({e.fecha_inicio} – {e.fecha_fin or 'Presente'})"
+            for e in experiencias_list[:3]
+        ) or "No especificado"
+
+        educacion_text = "\n".join(
+            f"- {e.titulo} en {e.institucion} ({e.fecha_fin or 'En curso'})"
+            for e in educacion_list[:2]
+        ) or "No especificado"
+
+        habilidades_text = ", ".join(habilidades_list[:10]) or "No especificado"
+
+        if isinstance(links_raw, dict):
+            links_text = "\n".join(
+                f"- {k}: {v}" for k, v in list(links_raw.items())[:3]
+            ) or "No especificado"
         else:
-            # Si es lista de objetos Link
-            links_text = "\n".join([
-                f"- {link.tipo}: {link.url}"
-                for link in links_dict[:3]
-            ]) if links_dict else "No especificado"
-        
-        # Crear el task prompt con toda la información del candidato
-        task_prompt = f"""Eres un asistente de aplicación de empleo. Tu ÚNICO objetivo es completar el formulario de aplicación en esta página web.
+            links_text = "\n".join(
+                f"- {lnk.tipo}: {lnk.url}" for lnk in list(links_raw)[:3]
+            ) or "No especificado"
 
-PRIMERO, navega a esta URL: {oferta.url}
+        linkedin_url = links_raw.get("linkedin", "") if isinstance(links_raw, dict) else ""
 
-INFORMACIÓN DEL CANDIDATO:
-Nombre completo: {perfil.nombre}
+        # ── 2. Construir task prompt ────────────────────────────────
+        task_prompt = f"""Tu única misión es postular al trabajo en la URL: {oferta.url}
+
+Usa los siguientes datos del candidato:
+Nombre Completo: {perfil.nombre}
 Email: {perfil.email}
 Teléfono: {perfil.telefono}
-Ubicación: {perfil.ubicacion_actual}
-Título profesional: {perfil.titulo_profesional}
+Ubicación: {perfil.ubicacion_actual or 'No especificado'}
+Título profesional: {perfil.titulo_profesional or 'No especificado'}
+LinkedIn: {linkedin_url}
 
 Resumen profesional:
 {(perfil.resumen[:500] if perfil.resumen else 'No especificado')}
@@ -1761,91 +1757,91 @@ Habilidades técnicas:
 Links profesionales:
 {links_text}
 
-ARCHIVO CV (RUTA ABSOLUTA):
+IMPORTANTE: El archivo del Curriculum Vitae (PDF) se encuentra en esta ruta local absoluta:
 {cv_pdf.absolute()}
 
-INSTRUCCIONES CRÍTICAS:
-1. Navega por el formulario de aplicación y rellena TODOS los campos requeridos con la información proporcionada arriba.
-2. Cuando encuentres un campo para subir CV/Resume, usa EXACTAMENTE esta ruta: {cv_pdf.absolute()}
-3. Si hay campos de texto libre (ej: "Why do you want to work here?", "Cover letter"), escribe una respuesta breve y profesional basada en el resumen del candidato.
-4. Marca cualquier checkbox de términos y condiciones si es necesario.
-5. Haz clic en el botón de "Submit", "Send Application", "Apply" o similar para enviar la aplicación.
-6. DETENTE INMEDIATAMENTE después de ver una pantalla de confirmación que diga "Application submitted", "Thank you", "Success" o similar.
-7. NO navegues a otras páginas después de enviar la aplicación.
-8. Si encuentras errores de validación, intenta corregirlos usando la información del candidato.
+Instrucciones de navegación:
+1. Busca el formulario de postulación en la página.
+2. Rellena los campos obligatorios con los datos del candidato.
+3. Sube el archivo PDF del Curriculum usando la ruta absoluta proporcionada.
+4. Si hay campos de texto libre (ej: cover letter), escribe una respuesta breve y profesional.
+5. Marca cualquier checkbox de términos y condiciones si es necesario.
+6. Haz click en el botón final de 'Submit', 'Apply', o 'Enviar Postulación'.
+7. Detén tu ejecución inmediatamente cuando detectes un mensaje de éxito confirmando la postulación."""
 
-IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas hasta que veas la confirmación de éxito."""
-
-        trace(f"Configurando browser-use")
-        
-        # browser-use requiere configuración específica
+        # ── 3. Configurar LLM local (OpenAI-compatible) ────────────
         from jober.core.config import load_settings
-        import os
-        
+
         settings = load_settings()
-        
-        # Configurar API key de browser-use
-        os.environ["BROWSER_USE_API_KEY"] = "bu_YOAFwAjQA_LEJ8EESf1mb6um0Lg7-RXwfxgiF9cQ1-0"
-        
-        trace(f"Configuración de API establecida")
-        
-        # Crear agente con browser-use
-        # Browser-use manejará la configuración del LLM internamente
+        trace(f"Usando LLM local: {settings.llm_model} via {settings.llm_base_url}")
+
+        llm = BrowserUseChatOpenAI(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            temperature=0.0,
+        )
+
+        # ── 4. Lanzar navegador LOCAL (gratis, headless=False) ──────
+        browser = Browser(headless=False)
+        trace("Navegador local Chromium lanzado")
+
         agent = Agent(
             task=task_prompt,
+            llm=llm,
+            browser=browser,
+            use_vision=True,
         )
-        
-        trace(f"Ejecutando agente universal")
-        
-        # Ejecutar el agente
-        # La URL está incluida en el task prompt
+
+        trace(f"Ejecutando agente universal en {oferta.url}")
         agent_result = await agent.run(max_steps=100)
-        
+
+        # ── 5. Cerrar navegador ─────────────────────────────────────
+        await browser.close()
+        browser = None
         trace("Agente universal completó su ejecución")
-        
-        # Parsear resultado
-        # browser-use devuelve un objeto con información sobre la ejecución
+
+        # ── 6. Parsear resultado ────────────────────────────────────
         success = False
         mensaje = "Agente universal ejecutado"
-        
-        # Verificar si el agente completó exitosamente
+
         if agent_result:
-            # El agente devuelve información sobre las acciones tomadas
-            final_message = str(agent_result.final_result()) if hasattr(agent_result, 'final_result') else str(agent_result)
-            
-            # Buscar indicadores de éxito en el resultado
+            final_message = (
+                str(agent_result.final_result())
+                if hasattr(agent_result, "final_result")
+                else str(agent_result)
+            )
             success_indicators = [
                 "submitted", "success", "thank you", "application sent",
-                "enviado", "éxito", "gracias", "aplicación enviada"
+                "received", "confirmed",
+                "enviado", "éxito", "gracias", "aplicación enviada",
             ]
-            
-            if any(indicator in final_message.lower() for indicator in success_indicators):
+            if any(ind in final_message.lower() for ind in success_indicators):
                 success = True
-                mensaje = "Aplicación enviada exitosamente por agente universal"
+                mensaje = "Aplicación enviada exitosamente por agente universal local"
             else:
                 mensaje = f"Agente universal completó pero no se detectó confirmación clara: {final_message[:200]}"
-        
+
         trace(f"Resultado: {'Éxito' if success else 'Incierto'}")
-        
-        return _finalize_result(
-            result,
-            None,
-            enviado=success,
-            mensaje=mensaje,
-        )
-        
+        return _finalize_result(result, None, enviado=success, mensaje=mensaje)
+
     except Exception as exc:
-        import traceback
-        tb = traceback.format_exc()
+        import traceback as _tb
+
+        tb = _tb.format_exc()
         logger.exception("Fallo agente universal para {}: {}", oferta.url, exc)
         trace(f"Error en agente universal: {exc}")
         trace(f"Traceback completo: {tb}")
         return _finalize_result(
-            result,
-            None,
-            enviado=False,
+            result, None, enviado=False,
             mensaje=f"Fallo el agente universal: {exc}",
         )
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
 
 async def _route_apply(
