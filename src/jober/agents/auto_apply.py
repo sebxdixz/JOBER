@@ -27,7 +27,7 @@ from jober.core.models import OfertaTrabajo, PerfilMaestro, ResultadoAplicacion
 
 # Browser-use imports for universal agent
 try:
-    from browser_use import Agent, Browser, BrowserConfig
+    from browser_use import Agent, Browser
     BROWSER_USE_AVAILABLE = True
 except ImportError:
     BROWSER_USE_AVAILABLE = False
@@ -1768,19 +1768,11 @@ IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas has
             from jober.core.config import get_llm
             llm = get_llm(temperature=0.1)
         
-        # Configurar browser
-        browser_config = BrowserConfig(
-            headless=False,  # Mostrar navegador para debugging
-            disable_security=False,
-        )
-        
-        browser = Browser(config=browser_config)
-        
-        # Crear agente
+        # Crear agente con browser-use
+        # Browser se crea automáticamente por el agente
         agent = Agent(
             task=task_prompt,
             llm=llm,
-            browser=browser,
         )
         
         trace(f"Navegando a {oferta.url}")
