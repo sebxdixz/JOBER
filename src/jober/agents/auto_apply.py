@@ -1780,6 +1780,9 @@ Instrucciones de navegación:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.0,
+            # GLM y modelos OpenAI-compatible no siempre soportan response_format JSON schema
+            add_schema_to_system_prompt=True,
+            dont_force_structured_output=True,
         )
 
         # ── 4. Lanzar navegador LOCAL (gratis, headless=False) ──────
@@ -1790,14 +1793,14 @@ Instrucciones de navegación:
             task=task_prompt,
             llm=llm,
             browser=browser,
-            use_vision=True,
+            use_vision=False,
         )
 
         trace(f"Ejecutando agente universal en {oferta.url}")
         agent_result = await agent.run(max_steps=100)
 
         # ── 5. Cerrar navegador ─────────────────────────────────────
-        await browser.close()
+        await browser.stop()
         browser = None
         trace("Agente universal completó su ejecución")
 
@@ -1839,7 +1842,7 @@ Instrucciones de navegación:
     finally:
         if browser is not None:
             try:
-                await browser.close()
+                await browser.stop()
             except Exception:
                 pass
 
