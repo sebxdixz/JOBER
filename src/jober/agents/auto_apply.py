@@ -1737,6 +1737,8 @@ async def _apply_universal_agent(
         # Crear el task prompt con toda la información del candidato
         task_prompt = f"""Eres un asistente de aplicación de empleo. Tu ÚNICO objetivo es completar el formulario de aplicación en esta página web.
 
+PRIMERO, navega a esta URL: {oferta.url}
+
 INFORMACIÓN DEL CANDIDATO:
 Nombre completo: {perfil.nombre}
 Email: {perfil.email}
@@ -1793,11 +1795,11 @@ IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas has
             task=task_prompt,
         )
         
-        trace(f"Navegando a {oferta.url}")
+        trace(f"Ejecutando agente universal")
         
         # Ejecutar el agente
-        # browser-use navega automáticamente a la URL especificada en el task
-        agent_result = await agent.run(url=oferta.url)
+        # La URL está incluida en el task prompt
+        agent_result = await agent.run(max_steps=100)
         
         trace("Agente universal completó su ejecución")
         
