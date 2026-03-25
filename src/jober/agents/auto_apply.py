@@ -1769,25 +1769,40 @@ Instrucciones de navegación:
 6. Haz click en el botón final de 'Submit', 'Apply', o 'Enviar Postulación'.
 7. Detén tu ejecución inmediatamente cuando detectes un mensaje de éxito confirmando la postulación."""
 
-        # ── 3. Configurar LLM local (OpenAI-compatible) ────────────
+        # ── 3. Configurar LLM local (OpenAI para browser-use) ──────
         from jober.core.config import load_settings
+        import os
 
         settings = load_settings()
-        trace(f"Usando LLM local: {settings.llm_model} via {settings.llm_base_url}")
+        
+        # browser-use requiere un modelo con structured output nativo
+        # Usar OpenAI gpt-4o-mini (barato y rápido) en vez de GLM
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        if not openai_key:
+            return _finalize_result(
+                result, None, enviado=False,
+                mensaje="OPENAI_API_KEY no configurado. El agente universal requiere OpenAI para structured output.",
+            )
+        
+        trace(f"Usando OpenAI gpt-4o-mini para agente universal (structured output)")
 
         llm = BrowserUseChatOpenAI(
-            model=settings.llm_model,
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
+            model="gpt-4o-mini",
+            api_key=openai_key,
             temperature=0.0,
-            # GLM y modelos OpenAI-compatible no siempre soportan response_format JSON schema
-            add_schema_to_system_prompt=True,
-            dont_force_structured_output=True,
         )
 
-        # ── 4. Lanzar navegador LOCAL (gratis, headless=False) ──────
-        browser = Browser(headless=False)
-        trace("Navegador local Chromium lanzado")
+        # ── 4. Lanzar navegador LOCAL con sesión persistente ────────
+        # Guardar sesión del navegador para reutilizar logins
+        from jober.core.config import JOBER_HOME
+        browser_profile_dir = JOBER_HOME / "browser_profile"
+        browser_profile_dir.mkdir(parents=True, exist_ok=True)
+        
+        browser = Browser(
+            headless=False,
+            user_data_dir=str(browser_profile_dir),
+        )
+        trace(f"Navegador local Chromium lanzado (perfil: {browser_profile_dir})")
 
         agent = Agent(
             task=task_prompt,
