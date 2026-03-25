@@ -1796,7 +1796,8 @@ IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas has
         trace(f"Navegando a {oferta.url}")
         
         # Ejecutar el agente
-        agent_result = await agent.run(start_url=oferta.url)
+        # browser-use navega automáticamente a la URL especificada en el task
+        agent_result = await agent.run(url=oferta.url)
         
         trace("Agente universal completó su ejecución")
         
