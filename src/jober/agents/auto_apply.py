@@ -1453,13 +1453,22 @@ async def _apply_linkedin(
 
     try:
         trace("LinkedIn: buscando boton Easy Apply")
-        if not await _click_first(page, LINKEDIN_EASY_APPLY_SELECTORS):
-            return _finalize_result(
-                result,
-                page,
-                enviado=False,
-                mensaje="LinkedIn no mostró Easy Apply. Postulación manual requerida.",
-            )
+        button_found = await _click_first(page, LINKEDIN_EASY_APPLY_SELECTORS)
+        
+        # Si no encontró con selectores estáticos, usar análisis inteligente
+        if not button_found:
+            trace("LinkedIn: selectores estáticos fallaron, usando análisis inteligente de DOM")
+            from jober.agents.smart_button_finder import click_apply_button_smart
+            
+            success, message = await click_apply_button_smart(page)
+            if not success:
+                return _finalize_result(
+                    result,
+                    page,
+                    enviado=False,
+                    mensaje=f"LinkedIn: {message}",
+                )
+            trace(f"LinkedIn: botón encontrado con análisis inteligente - {message}")
 
         page = await _settle_page(page)
         form_context = await _wait_for_form_context(page, LINKEDIN_FORM_SELECTORS)
