@@ -1701,22 +1701,26 @@ async def _apply_universal_agent(
     
     try:
         # Preparar información del perfil para el prompt
+        experiencias_list = perfil.experiencias if perfil.experiencias else []
         experiencias_text = "\n".join([
             f"- {exp.cargo} en {exp.empresa} ({exp.fecha_inicio} - {exp.fecha_fin or 'Presente'})"
-            for exp in perfil.experiencias[:3]
-        ]) if perfil.experiencias else "No especificado"
+            for exp in experiencias_list[:3]
+        ]) if experiencias_list else "No especificado"
         
+        educacion_list = perfil.educacion if perfil.educacion else []
         educacion_text = "\n".join([
             f"- {edu.titulo} en {edu.institucion} ({edu.fecha_fin or 'En curso'})"
-            for edu in perfil.educacion[:2]
-        ]) if perfil.educacion else "No especificado"
+            for edu in educacion_list[:2]
+        ]) if educacion_list else "No especificado"
         
-        habilidades_text = ", ".join(perfil.habilidades_tecnicas[:10]) if perfil.habilidades_tecnicas else "No especificado"
+        habilidades_list = perfil.habilidades_tecnicas if perfil.habilidades_tecnicas else []
+        habilidades_text = ", ".join(habilidades_list[:10]) if habilidades_list else "No especificado"
         
+        links_list = perfil.links if perfil.links else []
         links_text = "\n".join([
             f"- {link.tipo}: {link.url}"
-            for link in perfil.links[:3]
-        ]) if perfil.links else "No especificado"
+            for link in links_list[:3]
+        ]) if links_list else "No especificado"
         
         # Crear el task prompt con toda la información del candidato
         task_prompt = f"""Eres un asistente de aplicación de empleo. Tu ÚNICO objetivo es completar el formulario de aplicación en esta página web.
