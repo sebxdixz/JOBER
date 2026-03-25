@@ -1774,31 +1774,26 @@ INSTRUCCIONES CRÍTICAS:
 
 IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas hasta que veas la confirmación de éxito."""
 
-        trace(f"Configurando browser-use con modelo de visión")
+        trace(f"Configurando browser-use")
         
-        # browser-use requiere configuración específica del LLM
-        # Usar la configuración de settings directamente
+        # browser-use requiere configuración específica
+        # Crear agente sin LLM personalizado - usará el modelo por defecto
+        # o configurar con variables de entorno
         from jober.core.config import load_settings
-        from langchain_openai import ChatOpenAI
+        import os
         
         settings = load_settings()
         
-        # Crear LLM compatible con browser-use
-        # browser-use funciona mejor con modelos de OpenAI o compatibles
-        llm = ChatOpenAI(
-            model=settings.llm_model,
-            temperature=0.1,
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-        )
+        # Configurar variables de entorno para browser-use
+        os.environ["OPENAI_API_KEY"] = settings.llm_api_key
+        os.environ["OPENAI_BASE_URL"] = settings.llm_base_url
         
-        trace(f"LLM configurado: {settings.llm_model}")
+        trace(f"Configuración de API establecida")
         
         # Crear agente con browser-use
-        # Browser se crea automáticamente por el agente
+        # Browser-use manejará la configuración del LLM internamente
         agent = Agent(
             task=task_prompt,
-            llm=llm,
         )
         
         trace(f"Navegando a {oferta.url}")
