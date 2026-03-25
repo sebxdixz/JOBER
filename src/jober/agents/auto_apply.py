@@ -1474,14 +1474,23 @@ async def _apply_linkedin(
             from jober.agents.smart_button_finder import click_apply_button_smart
             
             success, message = await click_apply_button_smart(page)
+            
+            # Si el análisis de DOM también falló, usar VISIÓN como último recurso
             if not success:
-                return _finalize_result(
-                    result,
-                    page,
-                    enviado=False,
-                    mensaje=f"LinkedIn: {message}",
-                )
-            trace(f"LinkedIn: botón encontrado con análisis inteligente - {message}")
+                trace("LinkedIn: análisis de DOM falló, usando VISIÓN (GLM-4V)")
+                from jober.agents.vision_button_finder import find_and_click_with_vision
+                
+                vision_success, vision_message = await find_and_click_with_vision(page)
+                if not vision_success:
+                    return _finalize_result(
+                        result,
+                        page,
+                        enviado=False,
+                        mensaje=f"LinkedIn: {vision_message}",
+                    )
+                trace(f"LinkedIn: botón encontrado con VISIÓN - {vision_message}")
+            else:
+                trace(f"LinkedIn: botón encontrado con análisis inteligente - {message}")
 
         page = await _settle_page(page)
         
