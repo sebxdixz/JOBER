@@ -70,8 +70,22 @@ async def find_apply_button_with_vision(page: Page) -> dict[str, any]:
         
         # 3. Consultar GLM-4V
         from langchain_core.messages import HumanMessage
+        from langchain_openai import ChatOpenAI
         
-        llm_vision = get_vision_llm(temperature=0.0)
+        # Usar GLM-4V específicamente (no GLM-4.7-Flash que no soporta visión)
+        # Configurar con el modelo de visión correcto
+        try:
+            llm_vision = get_vision_llm(temperature=0.0)
+        except:
+            # Fallback: crear instancia directa con GLM-4V
+            from jober.core.config import load_settings
+            settings = load_settings()
+            llm_vision = ChatOpenAI(
+                model="glm-4v",  # Modelo específico de visión
+                temperature=0.0,
+                api_key=settings.llm_api_key,
+                base_url=settings.llm_base_url,
+            )
         
         # Formato de mensaje para modelos multimodales
         message = HumanMessage(
