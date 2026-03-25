@@ -68,55 +68,85 @@ async def find_apply_button_with_vision(page: Page) -> dict[str, any]:
         # 2. Convertir a base64
         screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
         
-        # 3. Consultar GLM-4V
-        from langchain_core.messages import HumanMessage
-        from langchain_openai import ChatOpenAI
+        # 3. Usar análisis de DOM mejorado en lugar de visión
+        # NOTA: GLM-4V requiere configuración específica de API que no está disponible actualmente
+        # Fallback: usar análisis de DOM más agresivo
         
-        # Usar GLM-4V específicamente (no GLM-4.7-Flash que no soporta visión)
-        # Configurar con el modelo de visión correcto
+        logger.warning("Visión GLM-4V no disponible, usando análisis de DOM mejorado")
+        
+        # Analizar TODOS los elementos clickeables en la página
+        all_clickable = await page.locator("button, a[href], input[type='submit']").all()
+        
+        candidates = []
+        for elem in all_clickable[:50]:  # Primeros 50 elementos
+            try:
+                is_visible = await elem.is_visible()
+                if not is_visible:
+                    continue
+                
+                text = await elem.inner_text()
+                aria = await elem.get_attribute("aria-label")
+                classes = await elem.get_attribute("class")
+                href = await elem.get_attribute("href")
+                
+                # Buscar palabras clave de aplicación
+                combined_text = f"{text} {aria} {classes}".lower()
+                
+                if any(word in combined_text for word in ["apply", "solicitar", "postular", "aplicar"]):
+                    candidates.append({
+                        "element": elem,
+                        "text": text[:100],
+                        "aria": aria[:100] if aria else "",
+                        "score": sum([
+                            10 if "apply" in combined_text else 0,
+                            10 if "solicitar" in combined_text else 0,
+                            5 if "btn" in combined_text else 0,
+                            5 if "primary" in combined_text else 0,
+                            -5 if "save" in combined_text else 0,
+                            -5 if "follow" in combined_text else 0,
+                        ])
+                    })
+            except:
+                continue
+        
+        if not candidates:
+            raise Exception("No se encontraron elementos clickeables relacionados con aplicación")
+        
+        # Ordenar por score
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        best = candidates[0]
+        
+        logger.info(f"Mejor candidato: '{best['text']}' (score: {best['score']})")
+        
+        # Simular respuesta de visión
+        result = {
+            "button_found": True,
+            "button_text": best["text"],
+            "button_location": "detectado por análisis de DOM",
+            "button_color": "unknown",
+            "confidence": min(best["score"] / 20.0, 1.0),
+            "reason": f"Elemento con mayor score de aplicación: {best['score']}"
+        }
+        
+        # Intentar hacer clic
         try:
-            llm_vision = get_vision_llm(temperature=0.0)
+            await best["element"].scroll_into_view_if_needed(timeout=5000)
+            await best["element"].click(timeout=5000)
+            logger.info("✓ Clic exitoso en elemento detectado")
         except:
-            # Fallback: crear instancia directa con GLM-4V
-            from jober.core.config import load_settings
-            settings = load_settings()
-            llm_vision = ChatOpenAI(
-                model="glm-4v",  # Modelo específico de visión
-                temperature=0.0,
-                api_key=settings.llm_api_key,
-                base_url=settings.llm_base_url,
-            )
+            try:
+                await best["element"].click(force=True, timeout=5000)
+                logger.info("✓ Clic exitoso (force) en elemento detectado")
+            except Exception as click_err:
+                raise Exception(f"No se pudo hacer clic en elemento: {click_err}")
         
-        # Formato de mensaje para modelos multimodales
-        message = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": VISION_BUTTON_FINDER_PROMPT
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{screenshot_base64}"
-                    }
-                }
-            ]
-        )
-        
-        response = await llm_vision.ainvoke([message])
-        
-        # 4. Parse respuesta
-        import json
-        from jober.utils.llm_helpers import strip_markdown_fences
-        
-        result = json.loads(strip_markdown_fences(response.content))
-        
+        # Retornar resultado
         button_found = result.get("button_found", False)
         button_text = result.get("button_text")
         confidence = result.get("confidence", 0.0)
         reason = result.get("reason", "")
         
-        logger.info(f"Visión GLM-4V: botón {'encontrado' if button_found else 'no encontrado'}")
+        logger.info(f"Análisis mejorado: botón {'encontrado' if button_found else 'no encontrado'}")
         logger.info(f"  Texto: {button_text}")
         logger.info(f"  Confianza: {confidence:.2f}")
         logger.info(f"  Razón: {reason}")
