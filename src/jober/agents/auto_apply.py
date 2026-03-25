@@ -1453,7 +1453,20 @@ async def _apply_linkedin(
 
     try:
         trace("LinkedIn: buscando boton Easy Apply")
-        button_found = await _click_first(page, LINKEDIN_EASY_APPLY_SELECTORS)
+        
+        # Intentar con selectores estáticos primero (timeout corto para fallar rápido)
+        button_found = False
+        for selector in LINKEDIN_EASY_APPLY_SELECTORS:
+            try:
+                locator = page.locator(selector).first
+                # Timeout corto de 3 segundos por selector
+                await locator.wait_for(state="visible", timeout=3000)
+                await locator.click(timeout=3000)
+                button_found = True
+                trace(f"LinkedIn: botón encontrado con selector estático: {selector[:50]}")
+                break
+            except Exception:
+                continue
         
         # Si no encontró con selectores estáticos, usar análisis inteligente
         if not button_found:
