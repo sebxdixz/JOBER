@@ -21,9 +21,17 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from jober.core.config import ensure_profile_dirs, get_active_profile_id
+from jober.core.config import ensure_profile_dirs, get_active_profile_id, get_vision_llm
 from jober.core.logging import logger
 from jober.core.models import OfertaTrabajo, PerfilMaestro, ResultadoAplicacion
+
+# Browser-use imports for universal agent
+try:
+    from browser_use import Agent, Browser, BrowserConfig
+    BROWSER_USE_AVAILABLE = True
+except ImportError:
+    BROWSER_USE_AVAILABLE = False
+    logger.warning("browser-use no está instalado. El agente universal no estará disponible.")
 
 
 SHORT_TIMEOUT_MS = 60_000
@@ -1666,6 +1674,164 @@ async def _apply_linkedin(
         )
 
 
+async def _apply_universal_agent(
+    oferta: OfertaTrabajo,
+    perfil: PerfilMaestro,
+    cv_pdf: Path,
+    cover_letter_pdf: Path | None,
+    cover_letter_md: str,
+    trace: TraceFn,
+) -> ResultadoAplicacion:
+    """Agente Universal usando browser-use para ATS desconocidos.
+    
+    Este agente usa visión y árboles de accesibilidad para navegar
+    dinámicamente cualquier formulario de aplicación.
+    """
+    result = _new_result(oferta, "universal_agent")
+    
+    if not BROWSER_USE_AVAILABLE:
+        return _finalize_result(
+            result,
+            None,
+            enviado=False,
+            mensaje="browser-use no está instalado. Ejecuta: pip install browser-use",
+        )
+    
+    trace("Iniciando Agente Universal con browser-use")
+    
+    try:
+        # Preparar información del perfil para el prompt
+        experiencias_text = "\n".join([
+            f"- {exp.cargo} en {exp.empresa} ({exp.fecha_inicio} - {exp.fecha_fin or 'Presente'})"
+            for exp in perfil.experiencias[:3]
+        ]) if perfil.experiencias else "No especificado"
+        
+        educacion_text = "\n".join([
+            f"- {edu.titulo} en {edu.institucion} ({edu.fecha_fin or 'En curso'})"
+            for edu in perfil.educacion[:2]
+        ]) if perfil.educacion else "No especificado"
+        
+        habilidades_text = ", ".join(perfil.habilidades_tecnicas[:10]) if perfil.habilidades_tecnicas else "No especificado"
+        
+        links_text = "\n".join([
+            f"- {link.tipo}: {link.url}"
+            for link in perfil.links[:3]
+        ]) if perfil.links else "No especificado"
+        
+        # Crear el task prompt con toda la información del candidato
+        task_prompt = f"""Eres un asistente de aplicación de empleo. Tu ÚNICO objetivo es completar el formulario de aplicación en esta página web.
+
+INFORMACIÓN DEL CANDIDATO:
+Nombre completo: {perfil.nombre}
+Email: {perfil.email}
+Teléfono: {perfil.telefono}
+Ubicación: {perfil.ubicacion_actual}
+Título profesional: {perfil.titulo_profesional}
+
+Resumen profesional:
+{perfil.resumen[:500] if perfil.resumen else 'No especificado'}
+
+Experiencia laboral:
+{experiencias_text}
+
+Educación:
+{educacion_text}
+
+Habilidades técnicas:
+{habilidades_text}
+
+Links profesionales:
+{links_text}
+
+ARCHIVO CV (RUTA ABSOLUTA):
+{cv_pdf.absolute()}
+
+INSTRUCCIONES CRÍTICAS:
+1. Navega por el formulario de aplicación y rellena TODOS los campos requeridos con la información proporcionada arriba.
+2. Cuando encuentres un campo para subir CV/Resume, usa EXACTAMENTE esta ruta: {cv_pdf.absolute()}
+3. Si hay campos de texto libre (ej: "Why do you want to work here?", "Cover letter"), escribe una respuesta breve y profesional basada en el resumen del candidato.
+4. Marca cualquier checkbox de términos y condiciones si es necesario.
+5. Haz clic en el botón de "Submit", "Send Application", "Apply" o similar para enviar la aplicación.
+6. DETENTE INMEDIATAMENTE después de ver una pantalla de confirmación que diga "Application submitted", "Thank you", "Success" o similar.
+7. NO navegues a otras páginas después de enviar la aplicación.
+8. Si encuentras errores de validación, intenta corregirlos usando la información del candidato.
+
+IMPORTANTE: Tu objetivo es COMPLETAR y ENVIAR la aplicación. No te detengas hasta que veas la confirmación de éxito."""
+
+        trace(f"Configurando browser-use con modelo de visión")
+        
+        # Obtener LLM con capacidades de visión
+        try:
+            llm = get_vision_llm(temperature=0.1)
+        except Exception as e:
+            logger.warning(f"No se pudo obtener LLM de visión, usando LLM estándar: {e}")
+            from jober.core.config import get_llm
+            llm = get_llm(temperature=0.1)
+        
+        # Configurar browser
+        browser_config = BrowserConfig(
+            headless=False,  # Mostrar navegador para debugging
+            disable_security=False,
+        )
+        
+        browser = Browser(config=browser_config)
+        
+        # Crear agente
+        agent = Agent(
+            task=task_prompt,
+            llm=llm,
+            browser=browser,
+        )
+        
+        trace(f"Navegando a {oferta.url}")
+        
+        # Ejecutar el agente
+        agent_result = await agent.run(start_url=oferta.url)
+        
+        trace("Agente universal completó su ejecución")
+        
+        # Parsear resultado
+        # browser-use devuelve un objeto con información sobre la ejecución
+        success = False
+        mensaje = "Agente universal ejecutado"
+        
+        # Verificar si el agente completó exitosamente
+        if agent_result:
+            # El agente devuelve información sobre las acciones tomadas
+            final_message = str(agent_result.final_result()) if hasattr(agent_result, 'final_result') else str(agent_result)
+            
+            # Buscar indicadores de éxito en el resultado
+            success_indicators = [
+                "submitted", "success", "thank you", "application sent",
+                "enviado", "éxito", "gracias", "aplicación enviada"
+            ]
+            
+            if any(indicator in final_message.lower() for indicator in success_indicators):
+                success = True
+                mensaje = "Aplicación enviada exitosamente por agente universal"
+            else:
+                mensaje = f"Agente universal completó pero no se detectó confirmación clara: {final_message[:200]}"
+        
+        trace(f"Resultado: {'Éxito' if success else 'Incierto'}")
+        
+        return _finalize_result(
+            result,
+            None,
+            enviado=success,
+            mensaje=mensaje,
+        )
+        
+    except Exception as exc:
+        logger.exception("Fallo agente universal para {}: {}", oferta.url, exc)
+        trace(f"Error en agente universal: {exc}")
+        return _finalize_result(
+            result,
+            None,
+            enviado=False,
+            mensaje=f"Fallo el agente universal: {exc}",
+        )
+
+
 async def _route_apply(
     page: Page,
     ats: str,
@@ -1714,12 +1880,29 @@ async def _route_apply(
             mensaje="Requiere sesión activa. Postulación manual recomendada.",
         )
 
+    # ATS desconocido - usar agente universal con browser-use
+    if ats == "unsupported":
+        trace("ATS desconocido detectado, delegando a agente universal")
+        # Cerrar la página de Playwright ya que browser-use manejará su propio navegador
+        await page.close()
+        
+        # Llamar al agente universal (no necesita cover_letter_text, usa cover_letter_md)
+        return await _apply_universal_agent(
+            oferta=oferta,
+            perfil=perfil,
+            cv_pdf=cv_pdf,
+            cover_letter_pdf=cover_letter_pdf,
+            cover_letter_md=cover_letter_text,  # Pasar el texto como markdown
+            trace=trace,
+        )
+    
+    # Fallback por si acaso
     manual = _new_result(oferta, "unsupported")
     return _finalize_result(
         manual,
         page,
         enviado=False,
-        mensaje="ATS no soportado. Postulación manual requerida.",
+        mensaje="ATS no reconocido y agente universal no disponible.",
     )
 
 
@@ -1762,12 +1945,21 @@ async def auto_apply_to_job(
             enviado=False,
             mensaje="Faltan datos mínimos del perfil para auto-aplicar (nombre y email).",
         )
+    
+    # Si es unsupported, delegar directamente al agente universal sin Playwright
     if ats == "unsupported":
-        return _finalize_result(
-            result,
-            None,
-            enviado=False,
-            mensaje="ATS no soportado. Postulación manual requerida.",
+        _trace(f"ATS detectado: {ats} (desconocido)")
+        _trace("Delegando a agente universal con browser-use")
+        
+        cover_letter_text = _markdown_to_text(cover_letter_md)
+        
+        return await _apply_universal_agent(
+            oferta=oferta,
+            perfil=perfil,
+            cv_pdf=cv_pdf,
+            cover_letter_pdf=cover_letter_pdf,
+            cover_letter_md=cover_letter_text,
+            trace=_trace,
         )
 
     cover_letter_text = _markdown_to_text(cover_letter_md)
