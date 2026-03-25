@@ -1528,8 +1528,8 @@ async def _apply_linkedin(
             form_context = await _wait_for_form_context(page, generic_form_selectors, frame_hints=())
             
             if form_context is None:
-                # No hay formulario visible, puede requerir login o la oferta expiró
-                trace("LinkedIn: no se encontró formulario de aplicación")
+                # No hay formulario visible, intentar con universal form filler
+                trace("LinkedIn: no se encontró formulario estándar, usando análisis universal")
                 
                 # Verificar si requiere login
                 login_required = await page.locator("text=/sign in|log in|iniciar sesión/i").count() > 0
@@ -1551,12 +1551,42 @@ async def _apply_linkedin(
                         mensaje="La oferta de LinkedIn ya no está disponible o expiró.",
                     )
                 
-                return _finalize_result(
-                    result,
-                    page,
-                    enviado=False,
-                    mensaje="LinkedIn no expuso formulario de aplicación.",
-                )
+                # Intentar con universal form filler
+                from jober.agents.universal_form_filler import analyze_and_fill_form, find_and_click_submit
+                
+                trace("LinkedIn: intentando rellenar formulario con análisis LLM universal")
+                fill_result = await analyze_and_fill_form(page, perfil, cv_pdf)
+                
+                if fill_result["success"]:
+                    trace(f"LinkedIn: rellenados {fill_result['filled']}/{fill_result['total']} campos")
+                    result.detalles["universal_fill"] = f"{fill_result['filled']}/{fill_result['total']}"
+                    
+                    # Intentar submit
+                    if await find_and_click_submit(page):
+                        trace("LinkedIn: formulario enviado con universal filler")
+                        page = await _settle_page(page)
+                        
+                        # Verificar confirmación
+                        enviado, mensaje = await _confirm_submission(
+                            page,
+                            form_selectors=generic_form_selectors,
+                            success_tokens=("submitted", "applied", "thank", "success", "enviado", "gracias"),
+                        )
+                        return _finalize_result(result, page, enviado=enviado, mensaje=mensaje)
+                    else:
+                        return _finalize_result(
+                            result,
+                            page,
+                            enviado=False,
+                            mensaje="LinkedIn: formulario rellenado pero no se encontró botón de envío.",
+                        )
+                else:
+                    return _finalize_result(
+                        result,
+                        page,
+                        enviado=False,
+                        mensaje="LinkedIn no expuso formulario de aplicación.",
+                    )
 
         first_name, last_name = _split_name(perfil.nombre)
         field_map = (
