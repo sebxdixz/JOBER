@@ -69,28 +69,27 @@ async def find_apply_button_with_vision(page: Page) -> dict[str, any]:
         screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
         
         # 3. Consultar GLM-4V
+        from langchain_core.messages import HumanMessage
+        
         llm_vision = get_vision_llm(temperature=0.0)
         
-        # Formato de mensaje para GLM-4V
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": VISION_BUTTON_FINDER_PROMPT
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{screenshot_base64}"
-                        }
+        # Formato de mensaje para modelos multimodales
+        message = HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": VISION_BUTTON_FINDER_PROMPT
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{screenshot_base64}"
                     }
-                ]
-            }
-        ]
+                }
+            ]
+        )
         
-        response = await llm_vision.ainvoke(messages)
+        response = await llm_vision.ainvoke([message])
         
         # 4. Parse respuesta
         import json
